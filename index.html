@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#111111">
+<title>💪 Gym Tracker</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#111;--bg2:#1a1a1a;--bg3:#222;--accent:#7c6fef;--accent2:#9d93f5;--text:#f0f0f0;--text2:#888;--border:#2a2a2a;--danger:#ef4444;--success:#22c55e}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);height:100dvh;display:flex;flex-direction:column;overflow:hidden}
+/* ── SPLASH / LOGIN ── */
+#splash{position:fixed;inset:0;background:var(--bg);z-index:999;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;padding:32px}
+#splash h1{font-size:32px;font-weight:800}
+#splash p{color:var(--text2);text-align:center;font-size:14px;max-width:280px;line-height:1.6}
+.google-btn{display:flex;align-items:center;gap:10px;background:#fff;color:#333;border:none;border-radius:10px;padding:14px 24px;font-size:15px;font-weight:600;cursor:pointer;margin-top:8px}
+.google-btn svg{width:20px;height:20px;flex-shrink:0}
+.spinner{width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.error-box{background:#2a1a1a;border:1px solid var(--danger);border-radius:10px;padding:14px;font-size:13px;color:#fca5a5;max-width:300px;line-height:1.6;text-align:center}
+/* ── APP ── */
+#app{display:none;flex-direction:column;height:100dvh}
+.screen{display:none;flex:1;overflow-y:auto;padding:16px 16px 88px}
+.screen.active{display:block}
+nav{position:fixed;bottom:0;left:0;right:0;background:var(--bg2);border-top:1px solid var(--border);display:flex;height:64px;z-index:100}
+.nav-btn{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;background:none;border:none;color:var(--text2);font-size:10px;gap:3px;cursor:pointer;transition:color .2s;-webkit-tap-highlight-color:transparent}
+.nav-btn svg{width:22px;height:22px}
+.nav-btn.active{color:var(--accent2)}
+.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.header h1{font-size:22px;font-weight:700}
+/* sync badge */
+.sync-badge{font-size:11px;padding:4px 10px;border-radius:20px;font-weight:600;display:flex;align-items:center;gap:5px;transition:all .3s}
+.sync-badge.saving{background:#2a2a1a;color:#f59e0b}
+.sync-badge.saved{background:#1a2a1a;color:var(--success)}
+.sync-badge.error{background:#2a1a1a;color:var(--danger)}
+.sync-dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+.saving .sync-dot{animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.card{background:var(--bg2);border-radius:12px;padding:16px;margin-bottom:10px;border:1px solid var(--border)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 20px;border-radius:10px;border:none;cursor:pointer;font-size:14px;font-weight:600;transition:opacity .15s;-webkit-tap-highlight-color:transparent}
+.btn:active{opacity:.7}
+.btn-primary{background:var(--accent);color:#fff;width:100%}
+.btn-secondary{background:var(--bg3);color:var(--text);border:1px solid var(--border);width:100%}
+.btn-ghost{background:none;color:var(--text2);border:1px solid var(--border)}
+.btn-danger{background:none;color:var(--danger);border:none;padding:6px;cursor:pointer}
+.btn-sm{padding:8px 14px;font-size:13px}
+input,select{background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:10px 12px;font-size:15px;width:100%;-webkit-appearance:none;appearance:none}
+input:focus,select:focus{outline:none;border-color:var(--accent)}
+.ex-card{background:var(--bg2);border-radius:12px;margin-bottom:12px;border:1px solid var(--border);overflow:hidden}
+.ex-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:var(--bg3)}
+.ex-name{font-weight:600;font-size:15px}
+.sets-area{padding:12px 16px}
+.set-row{display:flex;align-items:center;gap:6px;margin-bottom:8px}
+.set-num{font-size:12px;color:var(--text2);width:24px;flex-shrink:0;text-align:center;font-weight:600}
+.weight-wrap{display:flex;flex:1.4;gap:4px}
+.weight-wrap input{flex:1;padding:10px 8px;text-align:center}
+.unit-btn{background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text2);font-size:11px;font-weight:700;padding:0 8px;cursor:pointer;flex-shrink:0;min-width:36px;height:42px;-webkit-tap-highlight-color:transparent}
+.unit-btn.active{color:var(--accent2);border-color:var(--accent)}
+.reps-wrap{flex:1;position:relative}
+.reps-wrap input{padding-right:34px;text-align:center}
+.reps-label{position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--text2);pointer-events:none}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:200;align-items:flex-end}
+.modal-overlay.open{display:flex}
+.modal{background:var(--bg2);border-radius:20px 20px 0 0;width:100%;max-height:82dvh;overflow-y:auto;padding:20px;border:1px solid var(--border)}
+.modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.modal-title{font-size:18px;font-weight:700}
+.close-btn{background:none;border:none;color:var(--text2);font-size:24px;cursor:pointer;line-height:1}
+.cat-label{font-size:11px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:1px;margin:14px 0 6px}
+.ex-opt{padding:13px 12px;border-radius:8px;cursor:pointer;font-size:14px;border:1px solid transparent;-webkit-tap-highlight-color:transparent}
+.ex-opt:active{background:var(--bg3)}
+.tag{display:inline-block;background:var(--accent);color:#fff;border-radius:4px;padding:2px 6px;font-size:10px;margin-left:6px;vertical-align:middle}
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+.stat-box{background:var(--bg2);border-radius:10px;padding:14px;border:1px solid var(--border);text-align:center}
+.stat-val{font-size:24px;font-weight:700;color:var(--accent2)}
+.stat-label{font-size:12px;color:var(--text2);margin-top:4px}
+.workout-item{background:var(--bg2);border-radius:12px;padding:16px;margin-bottom:10px;border:1px solid var(--border)}
+.workout-date{font-weight:600;font-size:15px}
+.workout-meta{font-size:13px;color:var(--text2);margin-top:4px}
+.workout-detail{margin-top:12px;border-top:1px solid var(--border);padding-top:12px;display:none}
+.workout-detail.open{display:block}
+.empty{text-align:center;padding:60px 20px;color:var(--text2)}
+.empty-icon{font-size:52px;margin-bottom:12px}
+.finish-fab{position:fixed;bottom:72px;right:16px;background:var(--success);color:#fff;border:none;border-radius:50px;padding:14px 22px;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 4px 20px rgba(34,197,94,.4);display:none;z-index:50}
+.chart-wrap{background:var(--bg2);border-radius:12px;padding:16px;margin-top:10px;border:1px solid var(--border)}
+svg.chart{width:100%;height:180px;display:block}
+.mini-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:12px}
+.mini-stat{text-align:center}
+.mini-val{font-size:18px;font-weight:700;color:var(--accent2)}
+.mini-label{font-size:11px;color:var(--text2)}
+select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:36px}
+</style>
+</head>
+<body>
+
+<!-- ── SPLASH ──────────────────────────────────────────────────────────── -->
+<div id="splash">
+  <div style="font-size:52px;margin-bottom:8px">💪</div>
+  <h1>Gym Tracker</h1>
+  <div id="splash-content" style="display:flex;flex-direction:column;align-items:center;gap:14px;margin-top:8px">
+    <div class="spinner"></div>
+    <p style="color:var(--text2);font-size:13px">Loading…</p>
+  </div>
+</div>
+
+<!-- ── APP ──────────────────────────────────────────────────────────────── -->
+<div id="app">
+  <!-- HOME -->
+  <div id="screen-home" class="screen active">
+    <div class="header">
+      <div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:2px" id="home-date"></div>
+        <h1>💪 Gym Tracker</h1>
+      </div>
+      <div id="sync-badge" class="sync-badge saved"><div class="sync-dot"></div><span id="sync-txt">Synced</span></div>
+    </div>
+    <div class="stat-grid" id="home-stats"></div>
+    <button class="btn btn-primary" style="margin-bottom:12px" onclick="startWorkout()">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Start Workout
+    </button>
+    <div id="home-recent"></div>
+  </div>
+
+  <!-- WORKOUT -->
+  <div id="screen-workout" class="screen">
+    <div class="header">
+      <div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:2px" id="workout-date-lbl"></div>
+        <h1>Today's Workout</h1>
+      </div>
+    </div>
+    <div id="exercises-list"></div>
+    <button class="btn btn-secondary" onclick="openPicker()" style="margin-bottom:8px">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Add Exercise
+    </button>
+  </div>
+  <button class="finish-fab" id="finish-fab" onclick="finishWorkout()">✓ Finish Workout</button>
+
+  <!-- HISTORY -->
+  <div id="screen-history" class="screen">
+    <div class="header"><h1>History</h1></div>
+    <div id="history-list"></div>
+  </div>
+
+  <!-- PROGRESS -->
+  <div id="screen-progress" class="screen">
+    <div class="header"><h1>Progress</h1></div>
+    <select id="prog-select" onchange="renderChart()" style="margin-bottom:14px"></select>
+    <div id="chart-area"></div>
+  </div>
+
+  <!-- NAV -->
+  <nav>
+    <button class="nav-btn active" id="nav-home" onclick="goTo('home')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>Home
+    </button>
+    <button class="nav-btn" id="nav-workout" onclick="goTo('workout')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6.5 6.5h11M6.5 17.5h11M4 12h16"/></svg>Workout
+    </button>
+    <button class="nav-btn" id="nav-history" onclick="goTo('history')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>History
+    </button>
+    <button class="nav-btn" id="nav-progress" onclick="goTo('progress')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Progress
+    </button>
+  </nav>
+</div>
+
+<!-- EXERCISE PICKER MODAL -->
+<div class="modal-overlay" id="modal" onclick="closePicker(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <span class="modal-title">Add Exercise</span>
+      <button class="close-btn" onclick="closePicker()">✕</button>
+    </div>
+    <input type="text" id="ex-search" placeholder="Search or type custom exercise…" oninput="filterEx()" style="margin-bottom:12px" autocomplete="off">
+    <div id="ex-list"></div>
+    <div id="custom-wrap" style="display:none;margin-top:8px">
+      <button class="btn btn-ghost btn-sm" style="width:100%" onclick="addCustom()">
+        + Add "<span id="custom-name"></span>" as custom exercise
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════
+// ⚙️  CONFIG — paste your Google OAuth Client ID here
+// ══════════════════════════════════════════════════════════
+const CLIENT_ID = '420878520483-o8a69rv3c0hdtehgt174jtqngcnik42j.apps.googleusercontent.com';
+// ══════════════════════════════════════════════════════════
+
+const SCOPE     = 'https://www.googleapis.com/auth/drive.appdata';
+const FILE_NAME = 'gym-tracker-data.json';
+
+// ── EXERCISES ──────────────────────────────────────────────
+const BASE = {
+  "Chest":["Bench Press","Incline Bench Press","Incline Dumbbell Press","Decline Bench Press","Dumbbell Flyes","Cable Fly","Pec Deck / Butterfly","Push-Ups","Chest Dips"],
+  "Back":["Deadlift","Romanian Deadlift","Pull-Ups","Chin-Ups","Lat Pulldown","Seated Cable Row","Dumbbell Row","Barbell Row","T-Bar Row","Face Pulls"],
+  "Legs":["Squat","Front Squat","Leg Press","Lunges","Bulgarian Split Squat","Leg Curl","Leg Extension","Calf Raises","Hip Thrust"],
+  "Shoulders":["Overhead Press","Seated Dumbbell Press","Lateral Raises","Front Raises","Rear Delt Fly","Arnold Press","Upright Row","Shrugs"],
+  "Arms":["Barbell Curl","Dumbbell Curl","Hammer Curl","Preacher Curl","Cable Curl","Tricep Pushdown","Skull Crushers","Overhead Tricep Extension","Close-Grip Bench","Dips"],
+  "Core":["Crunches","Plank","Leg Raises","Cable Crunch","Ab Wheel","Russian Twists","Side Plank","Hanging Knee Raises"]
+};
+
+// ── STATE ──────────────────────────────────────────────────
+let gToken    = null;
+let gFileId   = null;
+let appData   = {workouts:[], custom:[]};
+let wk        = null;  // current workout session
+let tokenClient;
+
+// ── GOOGLE DRIVE ───────────────────────────────────────────
+function gFetch(url, opts={}) {
+  return fetch(url, {...opts, headers:{Authorization:`Bearer ${gToken}`, ...(opts.headers||{})}});
+}
+
+async function driveInit() {
+  // Find existing data file
+  const r = await gFetch(`https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name%3D%27${FILE_NAME}%27`);
+  const j = await r.json();
+  if (j.files && j.files[0]) {
+    gFileId = j.files[0].id;
+    try {
+      const content = await gFetch(`https://www.googleapis.com/drive/v3/files/${gFileId}?alt=media`);
+      appData = await content.json();
+    } catch(e) { /* empty file, keep defaults */ }
+  } else {
+    // Create new file
+    const cr = await gFetch('https://www.googleapis.com/drive/v3/files', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({name:FILE_NAME, parents:['appDataFolder']})
+    });
+    const f = await cr.json();
+    gFileId = f.id;
+  }
+}
+
+async function cloudSave() {
+  if (!gFileId || !gToken) return;
+  setSyncStatus('saving');
+  try {
+    await gFetch(`https://www.googleapis.com/upload/drive/v3/files/${gFileId}?uploadType=media`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(appData)
+    });
+    setSyncStatus('saved');
+  } catch(e) {
+    setSyncStatus('error');
+  }
+}
+
+function setSyncStatus(s) {
+  const b = document.getElementById('sync-badge');
+  const t = document.getElementById('sync-txt');
+  if (!b) return;
+  b.className = 'sync-badge ' + s;
+  t.textContent = s==='saving'?'Saving…': s==='saved'?'Synced':'Sync error';
+}
+
+// ── AUTH ───────────────────────────────────────────────────
+function onGISLoad() {
+  if (CLIENT_ID === 'YOUR_CLIENT_ID_HERE') {
+    showSplashError('Please paste your Google OAuth Client ID into the HTML file where it says <code>YOUR_CLIENT_ID_HERE</code>.');
+    return;
+  }
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID, scope: SCOPE, prompt:'',
+    callback: handleToken
+  });
+  // Try silent sign-in first
+  tokenClient.requestAccessToken({prompt:''});
+}
+
+async function handleToken(resp) {
+  if (resp.error || !resp.access_token) {
+    showLoginButton(); return;
+  }
+  gToken = resp.access_token;
+  setSplashMsg('Loading your data…');
+  try {
+    await driveInit();
+    showApp();
+  } catch(e) {
+    showSplashError('Could not connect to Google Drive. Check your internet connection and try again.<br><br><button class="google-btn" onclick="signIn()" style="margin:auto">Retry</button>');
+  }
+}
+
+function signIn() {
+  tokenClient.requestAccessToken({prompt:'consent'});
+}
+
+function showLoginButton() {
+  document.getElementById('splash-content').innerHTML = `
+    <p>Sign in with Google to store your workout data in Google Drive.</p>
+    <button class="google-btn" onclick="signIn()">
+      <svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+      Sign in with Google
+    </button>`;
+}
+
+function showApp() {
+  document.getElementById('splash').style.display = 'none';
+  const app = document.getElementById('app');
+  app.style.display = 'flex';
+  app.style.flexDirection = 'column';
+  renderHome();
+}
+
+function setSplashMsg(msg) {
+  document.getElementById('splash-content').innerHTML = `<div class="spinner"></div><p style="color:var(--text2);font-size:13px">${msg}</p>`;
+}
+
+function showSplashError(html) {
+  document.getElementById('splash-content').innerHTML = `<div class="error-box">${html}</div>`;
+}
+
+// ── NAV ────────────────────────────────────────────────────
+function goTo(name) {
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('screen-'+name).classList.add('active');
+  document.getElementById('nav-'+name).classList.add('active');
+  document.getElementById('finish-fab').style.display = (name==='workout'&&wk&&wk.exercises.length)?'block':'none';
+  if(name==='home') renderHome();
+  if(name==='history') renderHistory();
+  if(name==='progress') renderProgressScreen();
+}
+
+// ── HOME ───────────────────────────────────────────────────
+function renderHome() {
+  document.getElementById('home-date').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+  const n = appData.workouts.length;
+  const last = n ? new Date(appData.workouts[n-1].date).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—';
+  document.getElementById('home-stats').innerHTML = `
+    <div class="stat-box"><div class="stat-val">${n}</div><div class="stat-label">Total Workouts</div></div>
+    <div class="stat-box"><div class="stat-val">${last}</div><div class="stat-label">Last Workout</div></div>`;
+  const recent = appData.workouts.slice(-3).reverse();
+  document.getElementById('home-recent').innerHTML = recent.length ? `
+    <div style="font-size:11px;font-weight:700;color:var(--text2);letter-spacing:1px;margin-bottom:8px">RECENT</div>
+    ${recent.map(w=>`<div class="card">
+      <div style="font-weight:600">${new Date(w.date).toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</div>
+      <div style="font-size:13px;color:var(--text2);margin-top:4px">${w.exercises.map(e=>e.name).join(', ')}</div>
+    </div>`).join('')}`
+  : `<div class="empty"><div class="empty-icon">🏋️</div><div>No workouts yet. Hit Start Workout!</div></div>`;
+}
+
+// ── WORKOUT ────────────────────────────────────────────────
+function startWorkout() {
+  if (!wk) wk = {date:new Date().toISOString(), exercises:[]};
+  document.getElementById('workout-date-lbl').textContent = new Date(wk.date).toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
+  goTo('workout');
+  renderExList();
+}
+
+function renderExList() {
+  const el = document.getElementById('exercises-list');
+  if (!wk || !wk.exercises.length) {
+    el.innerHTML = `<div class="empty" style="padding:40px 20px"><div class="empty-icon">➕</div><div>Add your first exercise below</div></div>`;
+    document.getElementById('finish-fab').style.display = 'none'; return;
+  }
+  document.getElementById('finish-fab').style.display = 'block';
+  el.innerHTML = wk.exercises.map((ex,ei)=>`
+    <div class="ex-card">
+      <div class="ex-header">
+        <span class="ex-name">${ex.name}</span>
+        <button class="btn-danger" onclick="removeEx(${ei})">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M9 6V4h6v2"/></svg>
+        </button>
+      </div>
+      <div class="sets-area">
+        <div style="display:flex;font-size:11px;color:var(--text2);font-weight:600;letter-spacing:.5px;margin-bottom:6px;padding:0 24px 0 30px">
+          <span style="flex:1.4;text-align:center">WEIGHT</span>
+          <span style="flex:1;text-align:center;margin-left:6px">REPS</span>
+          <span style="width:28px"></span>
+        </div>
+        ${ex.sets.map((s,si)=>`
+          <div class="set-row">
+            <span class="set-num">${si+1}</span>
+            <div class="weight-wrap">
+              <input type="number" inputmode="decimal" placeholder="0" value="${s.w||''}" onchange="upd(${ei},${si},'w',this.value)">
+              <button class="unit-btn ${s.u==='kg'?'active':''}" onclick="togUnit(${ei},${si})">${s.u}</button>
+            </div>
+            <div class="reps-wrap">
+              <input type="number" inputmode="numeric" placeholder="0" value="${s.r||''}" onchange="upd(${ei},${si},'r',this.value)">
+              <span class="reps-label">reps</span>
+            </div>
+            <button class="btn-danger" onclick="removeSet(${ei},${si})">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>`).join('')}
+        <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:4px" onclick="addSet(${ei})">+ Add Set</button>
+      </div>
+    </div>`).join('');
+}
+
+function addSet(ei) {
+  const last = wk.exercises[ei].sets.slice(-1)[0]||{w:'',u:'kg',r:''};
+  wk.exercises[ei].sets.push({w:last.w, u:last.u, r:''});
+  renderExList();
+}
+function removeSet(ei,si) {
+  wk.exercises[ei].sets.splice(si,1);
+  if (!wk.exercises[ei].sets.length) addSet(ei); else renderExList();
+}
+function upd(ei,si,f,v) {
+  wk.exercises[ei].sets[si][f] = f==='w' ? (parseFloat(v)||'') : (parseInt(v)||'');
+}
+function togUnit(ei,si) {
+  const s = wk.exercises[ei].sets[si];
+  if (s.u==='kg') { s.u='lbs'; s.w=s.w?Math.round(s.w*2.2046*10)/10:''; }
+  else             { s.u='kg';  s.w=s.w?Math.round(s.w/2.2046*10)/10:''; }
+  renderExList();
+}
+function removeEx(ei) { wk.exercises.splice(ei,1); renderExList(); }
+
+async function finishWorkout() {
+  if (!wk || !wk.exercises.length) { alert('Add at least one exercise first!'); return; }
+  appData.workouts.push(wk);
+  wk = null;
+  document.getElementById('exercises-list').innerHTML = '';
+  document.getElementById('finish-fab').style.display = 'none';
+  goTo('home');
+  await cloudSave();
+}
+
+// ── EXERCISE PICKER ────────────────────────────────────────
+function openPicker() {
+  document.getElementById('ex-search').value = '';
+  filterEx();
+  document.getElementById('modal').classList.add('open');
+  setTimeout(()=>document.getElementById('ex-search').focus(), 150);
+}
+function closePicker(e) { if (!e || e.target===document.getElementById('modal')) document.getElementById('modal').classList.remove('open'); }
+
+function filterEx() {
+  const q = document.getElementById('ex-search').value.trim().toLowerCase();
+  const cats = {...BASE, ...(appData.custom.length?{Custom:appData.custom}:{})};
+  const recent = [...new Set(appData.workouts.slice(-5).flatMap(w=>w.exercises.map(e=>e.name)))];
+  let html='', any=false;
+  for (const [cat,exs] of Object.entries(cats)) {
+    const f = exs.filter(e=>!q||e.toLowerCase().includes(q));
+    if (!f.length) continue; any=true;
+    html += `<div class="cat-label">${cat}</div>`;
+    html += f.map(e=>`<div class="ex-opt" onclick="pickEx('${e.replace(/'/g,"\\'")}')">
+      ${e}${recent.includes(e)?'<span class="tag">recent</span>':''}
+    </div>`).join('');
+  }
+  if (!any) html = `<div style="color:var(--text2);text-align:center;padding:20px">No results</div>`;
+  document.getElementById('ex-list').innerHTML = html;
+  const all = Object.values(cats).flat().map(e=>e.toLowerCase());
+  const cw = document.getElementById('custom-wrap');
+  if (q && !all.includes(q)) { document.getElementById('custom-name').textContent=document.getElementById('ex-search').value.trim(); cw.style.display='block'; }
+  else cw.style.display = 'none';
+}
+
+function pickEx(name) {
+  if (!wk) return;
+  if (!wk.exercises.some(e=>e.name===name)) wk.exercises.push({name, sets:[{w:'',u:'kg',r:''}]});
+  document.getElementById('modal').classList.remove('open');
+  renderExList();
+}
+
+async function addCustom() {
+  const name = document.getElementById('ex-search').value.trim(); if (!name) return;
+  if (!appData.custom.includes(name)) { appData.custom.push(name); await cloudSave(); }
+  pickEx(name);
+}
+
+// ── HISTORY ────────────────────────────────────────────────
+function renderHistory() {
+  const el = document.getElementById('history-list');
+  if (!appData.workouts.length) { el.innerHTML=`<div class="empty"><div class="empty-icon">📋</div><div>No workouts yet</div></div>`; return; }
+  el.innerHTML = appData.workouts.slice().reverse().map((w,i)=>{
+    const ri = appData.workouts.length-1-i;
+    const sets = w.exercises.reduce((a,e)=>a+e.sets.length,0);
+    return `<div class="workout-item">
+      <div onclick="toggleDetail(${ri})" style="cursor:pointer;-webkit-tap-highlight-color:transparent">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div class="workout-date">${new Date(w.date).toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})}</div>
+          <span style="font-size:12px;color:var(--text2)">${w.exercises.length} ex · ${sets} sets</span>
+        </div>
+        <div class="workout-meta">${w.exercises.map(e=>e.name).join(', ')}</div>
+      </div>
+      <div class="workout-detail" id="wd-${ri}">
+        ${w.exercises.map(ex=>`
+          <div style="margin-bottom:10px">
+            <div style="font-weight:600;font-size:14px;margin-bottom:6px">${ex.name}</div>
+            ${ex.sets.map((s,si)=>`<div style="font-size:13px;color:var(--text2);margin-bottom:2px">
+              Set ${si+1}: <strong style="color:var(--text)">${s.w||'—'} ${s.u}</strong> × <strong style="color:var(--text)">${s.r||'—'} reps</strong>
+            </div>`).join('')}
+          </div>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+function toggleDetail(i) { document.getElementById('wd-'+i).classList.toggle('open'); }
+
+// ── PROGRESS ───────────────────────────────────────────────
+let exMap = {};
+function renderProgressScreen() {
+  exMap = {};
+  appData.workouts.forEach(w => {
+    w.exercises.forEach(ex => {
+      if (!exMap[ex.name]) exMap[ex.name] = [];
+      const maxKg = Math.max(...ex.sets.map(s=>{ const v=parseFloat(s.w)||0; return s.u==='lbs'?v/2.2046:v; }));
+      exMap[ex.name].push({date:w.date, maxKg});
+    });
+  });
+  const sel = document.getElementById('prog-select'), prev = sel.value;
+  const names = Object.keys(exMap);
+  sel.innerHTML = names.length ? names.map(n=>`<option value="${n}">${n}</option>`).join('') : '<option>No data yet</option>';
+  if (prev && names.includes(prev)) sel.value = prev;
+  renderChart();
+}
+
+function renderChart() {
+  const name = document.getElementById('prog-select').value;
+  const data = exMap[name], el = document.getElementById('chart-area');
+  if (!data || data.length < 2) {
+    el.innerHTML = `<div class="chart-wrap" style="text-align:center;color:var(--text2);padding:40px">${data?'Need at least 2 sessions to show a chart.':'No data yet — log some workouts first!'}</div>`;
+    return;
+  }
+  const W=340,H=180,pt={t:20,r:16,b:38,l:46};
+  const cW=W-pt.l-pt.r, cH=H-pt.t-pt.b;
+  const vals=data.map(d=>d.maxKg);
+  const mn=Math.min(...vals), mx=Math.max(...vals), rng=mx-mn||1;
+  const pts=data.map((d,i)=>({
+    x:pt.l+(i/(data.length-1))*cW,
+    y:pt.t+cH-((d.maxKg-mn)/rng)*cH,
+    date:new Date(d.date).toLocaleDateString('en-US',{month:'short',day:'numeric'}),
+    val:d.maxKg
+  }));
+  const poly=pts.map(p=>`${p.x},${p.y}`).join(' ');
+  const area=`${pts[0].x},${pt.t+cH} ${poly} ${pts[pts.length-1].x},${pt.t+cH}`;
+  const yTicks=[0,.5,1].map(t=>({y:pt.t+cH-t*cH,v:Math.round((mn+t*rng)*10)/10}));
+  const step=Math.max(1,Math.floor(data.length/4));
+  const xTicks=pts.filter((_,i)=>i%step===0||i===pts.length-1);
+  const last=pts[pts.length-1];
+  const diff=vals[vals.length-1]-vals[0];
+  const tc=diff>=0?'#22c55e':'#ef4444';
+  el.innerHTML=`
+    <div class="chart-wrap">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px">
+        <div style="font-weight:700;font-size:15px">${name}</div>
+        <div style="font-size:13px;color:${tc};font-weight:700">${(diff>=0?'+':'')+Math.round(diff*10)/10} kg overall</div>
+      </div>
+      <svg class="chart" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+        <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#7c6fef" stop-opacity=".35"/>
+          <stop offset="100%" stop-color="#7c6fef" stop-opacity="0"/>
+        </linearGradient></defs>
+        ${yTicks.map(t=>`<line x1="${pt.l}" y1="${t.y}" x2="${W-pt.r}" y2="${t.y}" stroke="#2a2a2a" stroke-width="1"/>
+          <text x="${pt.l-6}" y="${t.y+4}" text-anchor="end" fill="#666" font-size="10">${t.v}</text>`).join('')}
+        <polygon points="${area}" fill="url(#g)"/>
+        <polyline points="${poly}" fill="none" stroke="#7c6fef" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+        ${pts.map(p=>`<circle cx="${p.x}" cy="${p.y}" r="4" fill="#7c6fef" stroke="#1a1a1a" stroke-width="2"/>`).join('')}
+        ${xTicks.map(p=>`<text x="${p.x}" y="${H-4}" text-anchor="middle" fill="#666" font-size="10">${p.date}</text>`).join('')}
+        <text x="${last.x}" y="${last.y-10}" text-anchor="middle" fill="#9d93f5" font-size="11" font-weight="700">${Math.round(last.val*10)/10} kg</text>
+      </svg>
+      <div class="mini-stats">
+        <div class="mini-stat"><div class="mini-val">${Math.round(Math.max(...vals)*10)/10}</div><div class="mini-label">Max (kg)</div></div>
+        <div class="mini-stat"><div class="mini-val">${Math.round(vals[vals.length-1]*10)/10}</div><div class="mini-label">Last (kg)</div></div>
+        <div class="mini-stat"><div class="mini-val">${data.length}</div><div class="mini-label">Sessions</div></div>
+      </div>
+    </div>`;
+}
+</script>
+
+<script src="https://accounts.google.com/gsi/client" onload="onGISLoad()" async defer></script>
+</body>
+</html>
