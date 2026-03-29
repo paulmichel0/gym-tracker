@@ -88,6 +88,12 @@ svg.chart{width:100%;height:180px;display:block}
 .mini-stat{text-align:center}
 .mini-val{font-size:18px;font-weight:700;color:var(--accent2)}
 .mini-label{font-size:11px;color:var(--text2)}
+.warmup-btn{width:26px;height:26px;border-radius:50%;border:1.5px solid var(--border);background:none;color:var(--text2);font-size:10px;font-weight:800;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;transition:all .15s}
+.warmup-btn.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.set-row.warmup{opacity:.55}
+.ex-stats{display:flex;gap:12px;padding:8px 16px;font-size:12px;color:var(--text2);border-bottom:1px solid var(--border)}
+.ex-stats span{display:flex;align-items:center;gap:4px}
+.ex-stats strong{color:var(--accent2);font-weight:700}
 select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:36px}
 </style>
 </head>
@@ -120,6 +126,10 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
       Start Workout
     </button>
     <div id="home-recent"></div>
+    <button class="btn btn-ghost btn-sm" style="margin-top:16px;width:100%" onclick="exportData()">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Export Data
+    </button>
   </div>
 
   <!-- WORKOUT -->
@@ -358,7 +368,12 @@ function renderExList() {
     document.getElementById('finish-fab').style.display = 'none'; return;
   }
   document.getElementById('finish-fab').style.display = 'block';
-  el.innerHTML = wk.exercises.map((ex,ei)=>`
+  el.innerHTML = wk.exercises.map((ex,ei)=>{
+    const stats = getExStats(ex.name);
+    const statsHtml = (stats.last || stats.pr) ? `<div class="ex-stats">${
+      stats.last ? `<span>Last: <strong>${stats.last.w} ${stats.last.u} x ${stats.last.r}</strong> (${new Date(stats.last.date).toLocaleDateString('en-US',{month:'short',day:'numeric'})})</span>` : ''
+    }${stats.pr ? `<span>PR: <strong>${stats.pr.w} ${stats.pr.u} x ${stats.pr.r}</strong></span>` : ''}</div>` : '';
+    return `
     <div class="ex-card">
       <div class="ex-header">
         <span class="ex-name">${ex.name}</span>
@@ -366,14 +381,16 @@ function renderExList() {
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M9 6V4h6v2"/></svg>
         </button>
       </div>
+      ${statsHtml}
       <div class="sets-area">
-        <div style="display:flex;font-size:11px;color:var(--text2);font-weight:600;letter-spacing:.5px;margin-bottom:6px;padding:0 24px 0 30px">
+        <div style="display:flex;font-size:11px;color:var(--text2);font-weight:600;letter-spacing:.5px;margin-bottom:6px;padding:0 24px 0 56px">
           <span style="flex:1.4;text-align:center">WEIGHT</span>
           <span style="flex:1;text-align:center;margin-left:6px">REPS</span>
           <span style="width:28px"></span>
         </div>
         ${ex.sets.map((s,si)=>`
-          <div class="set-row">
+          <div class="set-row${s.warmup?' warmup':''}">
+            <button class="warmup-btn${s.warmup?' on':''}" onclick="togWarmup(${ei},${si})" title="Warm-up">W</button>
             <span class="set-num">${si+1}</span>
             <div class="weight-wrap">
               <input type="number" inputmode="decimal" placeholder="0" value="${s.w||''}" onchange="upd(${ei},${si},'w',this.value)">
@@ -389,12 +406,13 @@ function renderExList() {
           </div>`).join('')}
         <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:4px" onclick="addSet(${ei})">+ Add Set</button>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 function addSet(ei) {
-  const last = wk.exercises[ei].sets.slice(-1)[0]||{w:'',u:'kg',r:''};
-  wk.exercises[ei].sets.push({w:last.w, u:last.u, r:''});
+  const last = wk.exercises[ei].sets.slice(-1)[0]||{w:'',u:'kg',r:'',warmup:false};
+  wk.exercises[ei].sets.push({w:last.w, u:last.u, r:'', warmup:false});
   renderExList();
 }
 function removeSet(ei,si) {
@@ -410,7 +428,38 @@ function togUnit(ei,si) {
   else             { s.u='kg';  s.w=s.w?Math.round(s.w/2.2046*10)/10:''; }
   renderExList();
 }
+function togWarmup(ei,si) {
+  wk.exercises[ei].sets[si].warmup = !wk.exercises[ei].sets[si].warmup;
+  renderExList();
+}
 function removeEx(ei) { wk.exercises.splice(ei,1); renderExList(); }
+
+function exportData() {
+  const blob = new Blob([JSON.stringify(appData, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'gym-tracker-data.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function getExStats(name) {
+  let last = null, pr = null;
+  for (const w of appData.workouts) {
+    for (const ex of w.exercises) {
+      if (ex.name !== name) continue;
+      for (const s of ex.sets) {
+        if (s.warmup) continue;
+        const wKg = s.u === 'lbs' ? (parseFloat(s.w)||0)/2.2046 : (parseFloat(s.w)||0);
+        if (wKg <= 0) continue;
+        const entry = {w: parseFloat(s.w)||0, u: s.u, r: parseInt(s.r)||0, wKg, date: w.date};
+        last = entry;
+        if (!pr || wKg > pr.wKg || (wKg === pr.wKg && entry.r > pr.r)) pr = entry;
+      }
+    }
+  }
+  return {last, pr};
+}
 
 async function finishWorkout() {
   if (!wk || !wk.exercises.length) { alert('Add at least one exercise first!'); return; }
@@ -454,7 +503,7 @@ function filterEx() {
 
 function pickEx(name) {
   if (!wk) return;
-  if (!wk.exercises.some(e=>e.name===name)) wk.exercises.push({name, sets:[{w:'',u:'kg',r:''}]});
+  if (!wk.exercises.some(e=>e.name===name)) wk.exercises.push({name, sets:[{w:'',u:'kg',r:'',warmup:false}]});
   document.getElementById('modal').classList.remove('open');
   renderExList();
 }
@@ -484,8 +533,8 @@ function renderHistory() {
         ${w.exercises.map(ex=>`
           <div style="margin-bottom:10px">
             <div style="font-weight:600;font-size:14px;margin-bottom:6px">${ex.name}</div>
-            ${ex.sets.map((s,si)=>`<div style="font-size:13px;color:var(--text2);margin-bottom:2px">
-              Set ${si+1}: <strong style="color:var(--text)">${s.w||'—'} ${s.u}</strong> × <strong style="color:var(--text)">${s.r||'—'} reps</strong>
+            ${ex.sets.map((s,si)=>`<div style="font-size:13px;color:var(--text2);margin-bottom:2px${s.warmup?';opacity:.55':''}">
+              ${s.warmup?'<span style="font-size:10px;background:var(--accent);color:#fff;border-radius:3px;padding:1px 4px;margin-right:4px">W</span>':''}Set ${si+1}: <strong style="color:var(--text)">${s.w||'—'} ${s.u}</strong> × <strong style="color:var(--text)">${s.r||'—'} reps</strong>
             </div>`).join('')}
           </div>`).join('')}
       </div>
