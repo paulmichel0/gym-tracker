@@ -248,14 +248,35 @@ async function driveInit() {
   }
 }
 
+async function refreshToken() {
+  return new Promise((resolve) => {
+    tokenClient.callback = (resp) => {
+      tokenClient.callback = handleToken;
+      if (resp.error || !resp.access_token) { resolve(false); return; }
+      gToken = resp.access_token;
+      resolve(true);
+    };
+    tokenClient.requestAccessToken({prompt:''});
+  });
+}
+
 async function cloudSave() {
   if (!gFileId || !gToken) return;
   setSyncStatus('saving');
   try {
-    await gFetch(`https://www.googleapis.com/upload/drive/v3/files/${gFileId}?uploadType=media`, {
+    let r = await gFetch(`https://www.googleapis.com/upload/drive/v3/files/${gFileId}?uploadType=media`, {
       method:'PATCH', headers:{'Content-Type':'application/json'},
       body: JSON.stringify(appData)
     });
+    if (r.status === 401) {
+      const refreshed = await refreshToken();
+      if (!refreshed) { setSyncStatus('error'); return; }
+      r = await gFetch(`https://www.googleapis.com/upload/drive/v3/files/${gFileId}?uploadType=media`, {
+        method:'PATCH', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(appData)
+      });
+    }
+    if (!r.ok) { setSyncStatus('error'); return; }
     setSyncStatus('saved');
   } catch(e) {
     setSyncStatus('error');
@@ -463,12 +484,19 @@ function getExStats(name) {
 
 async function finishWorkout() {
   if (!wk || !wk.exercises.length) { alert('Add at least one exercise first!'); return; }
-  appData.workouts.push(wk);
+  const saved = wk;
+  appData.workouts.push(saved);
+  await cloudSave();
+  const ok = document.querySelector('.sync-badge.saved');
+  if (!ok) {
+    appData.workouts.pop();
+    alert('Could not save — check your connection and try again.');
+    return;
+  }
   wk = null;
   document.getElementById('exercises-list').innerHTML = '';
   document.getElementById('finish-fab').style.display = 'none';
   goTo('home');
-  await cloudSave();
 }
 
 // ── EXERCISE PICKER ────────────────────────────────────────
