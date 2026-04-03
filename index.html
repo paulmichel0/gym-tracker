@@ -95,6 +95,8 @@ svg.chart{width:100%;height:180px;display:block}
 .ex-stats span{display:flex;align-items:center;gap:4px}
 .ex-stats strong{color:var(--accent2);font-weight:700}
 select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:36px}
+.del-btn{background:none;border:none;color:var(--text2);cursor:pointer;padding:4px 6px;border-radius:6px;font-size:13px;opacity:.5;transition:all .15s;-webkit-tap-highlight-color:transparent}
+.del-btn:hover,.del-btn:active{opacity:1;color:#ef4444;background:rgba(239,68,68,.1)}
 </style>
 </head>
 <body>
@@ -550,17 +552,23 @@ function renderHistory() {
     const ri = appData.workouts.length-1-i;
     const sets = w.exercises.reduce((a,e)=>a+e.sets.length,0);
     return `<div class="workout-item">
-      <div onclick="toggleDetail(${ri})" style="cursor:pointer;-webkit-tap-highlight-color:transparent">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <div class="workout-date">${new Date(w.date).toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})}</div>
-          <span style="font-size:12px;color:var(--text2)">${w.exercises.length} ex · ${sets} sets</span>
+      <div style="display:flex;align-items:start;gap:4px">
+        <div onclick="toggleDetail(${ri})" style="cursor:pointer;-webkit-tap-highlight-color:transparent;flex:1;min-width:0">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div class="workout-date">${new Date(w.date).toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})}</div>
+            <span style="font-size:12px;color:var(--text2)">${w.exercises.length} ex · ${sets} sets</span>
+          </div>
+          <div class="workout-meta">${w.exercises.map(e=>e.name).join(', ')}</div>
         </div>
-        <div class="workout-meta">${w.exercises.map(e=>e.name).join(', ')}</div>
+        <button class="del-btn" onclick="deleteWorkout(${ri})" title="Delete workout">✕</button>
       </div>
       <div class="workout-detail" id="wd-${ri}">
-        ${w.exercises.map(ex=>`
+        ${w.exercises.map((ex,ei)=>`
           <div style="margin-bottom:10px">
-            <div style="font-weight:600;font-size:14px;margin-bottom:6px">${ex.name}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <div style="font-weight:600;font-size:14px">${ex.name}</div>
+              <button class="del-btn" onclick="deleteExercise(${ri},${ei})" title="Delete exercise">✕</button>
+            </div>
             ${ex.sets.map((s,si)=>`<div style="font-size:13px;color:var(--text2);margin-bottom:2px${s.warmup?';opacity:.55':''}">
               ${s.warmup?'<span style="font-size:10px;background:var(--accent);color:#fff;border-radius:3px;padding:1px 4px;margin-right:4px">W</span>':''}Set ${si+1}: <strong style="color:var(--text)">${s.w||'—'} ${s.u}</strong> × <strong style="color:var(--text)">${s.r||'—'} reps</strong>
             </div>`).join('')}
@@ -570,6 +578,24 @@ function renderHistory() {
   }).join('');
 }
 function toggleDetail(i) { document.getElementById('wd-'+i).classList.toggle('open'); }
+
+async function deleteWorkout(i) {
+  if (!confirm('Delete this entire workout?')) return;
+  appData.workouts.splice(i, 1);
+  await cloudSave();
+  renderHistory();
+  renderHome();
+}
+
+async function deleteExercise(wi, ei) {
+  const w = appData.workouts[wi];
+  if (!confirm(`Delete "${w.exercises[ei].name}" from this workout?`)) return;
+  w.exercises.splice(ei, 1);
+  if (!w.exercises.length) appData.workouts.splice(wi, 1);
+  await cloudSave();
+  renderHistory();
+  renderHome();
+}
 
 // ── PROGRESS ───────────────────────────────────────────────
 let exMap = {};
