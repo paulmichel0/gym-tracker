@@ -83,6 +83,11 @@ input:focus,select:focus{outline:none;border-color:var(--accent)}
 .empty-icon{font-size:52px;margin-bottom:12px}
 .finish-fab{position:fixed;bottom:72px;right:16px;background:var(--success);color:#fff;border:none;border-radius:50px;padding:14px 22px;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 4px 20px rgba(34,197,94,.4);display:none;z-index:50}
 .chart-wrap{background:var(--bg2);border-radius:12px;padding:16px;margin-top:10px;border:1px solid var(--border)}
+.seg{display:flex;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:3px;margin-bottom:10px}
+.seg button{flex:1;background:none;border:none;color:var(--text2);font-size:13px;font-weight:600;padding:8px;border-radius:6px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.seg button.active{background:var(--accent);color:#fff}
+.weight-row{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;margin-bottom:6px;font-size:14px}
+.weight-row strong{color:var(--accent2);font-weight:700}
 svg.chart{width:100%;height:180px;display:block}
 .mini-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:12px}
 .mini-stat{text-align:center}
@@ -163,6 +168,27 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
     <div id="chart-area"></div>
   </div>
 
+  <!-- WEIGHT -->
+  <div id="screen-weight" class="screen">
+    <div class="header">
+      <h1>Weight</h1>
+      <button class="unit-btn active" id="weight-unit-btn" onclick="toggleWeightUnit()" style="height:32px;min-width:48px;font-size:12px">kg</button>
+    </div>
+    <div class="card">
+      <div style="font-size:11px;font-weight:700;color:var(--text2);letter-spacing:1px;margin-bottom:8px">LOG ENTRY</div>
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <input type="date" id="weight-date" style="flex:1" onchange="renderWeightEntryInput()">
+        <div style="flex:1;position:relative">
+          <input type="number" inputmode="decimal" step="0.1" id="weight-input" placeholder="0" style="text-align:center;padding-right:34px">
+          <span class="reps-label" id="weight-unit-lbl">kg</span>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="weight-save-btn" onclick="saveWeight()">Save</button>
+    </div>
+    <div id="weight-chart-area"></div>
+    <div id="weight-list" style="margin-top:14px"></div>
+  </div>
+
   <!-- NAV -->
   <nav>
     <button class="nav-btn active" id="nav-home" onclick="goTo('home')">
@@ -173,6 +199,9 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
     </button>
     <button class="nav-btn" id="nav-history" onclick="goTo('history')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>History
+    </button>
+    <button class="nav-btn" id="nav-weight" onclick="goTo('weight')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16l-1.5 13a2 2 0 0 1-2 1.8H7.5a2 2 0 0 1-2-1.8L4 7z"/><path d="M9 7V5a3 3 0 0 1 6 0v2"/><path d="M12 11v3"/><circle cx="12" cy="14" r=".5" fill="currentColor"/></svg>Weight
     </button>
     <button class="nav-btn" id="nav-progress" onclick="goTo('progress')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Progress
@@ -220,7 +249,7 @@ const BASE = {
 // ── STATE ──────────────────────────────────────────────────
 let gToken    = null;
 let gFileId   = null;
-let appData   = {workouts:[], custom:[]};
+let appData   = {workouts:[], custom:[], weights:[], weightUnit:'kg'};
 let wk        = null;  // current workout session
 let tokenClient;
 
@@ -238,6 +267,8 @@ async function driveInit() {
     try {
       const content = await gFetch(`https://www.googleapis.com/drive/v3/files/${gFileId}?alt=media`);
       appData = await content.json();
+      if (!appData.weights) appData.weights = [];
+      if (!appData.weightUnit) appData.weightUnit = 'kg';
     } catch(e) { /* empty file, keep defaults */ }
   } else {
     // Create new file
@@ -356,6 +387,7 @@ function goTo(name) {
   if(name==='home') renderHome();
   if(name==='history') renderHistory();
   if(name==='progress') renderProgressScreen();
+  if(name==='weight') renderWeightScreen();
 }
 
 // ── HOME ───────────────────────────────────────────────────
@@ -663,6 +695,174 @@ function renderChart() {
         <div class="mini-stat"><div class="mini-val">${Math.round(Math.max(...vals)*10)/10}</div><div class="mini-label">Max (kg)</div></div>
         <div class="mini-stat"><div class="mini-val">${Math.round(vals[vals.length-1]*10)/10}</div><div class="mini-label">Last (kg)</div></div>
         <div class="mini-stat"><div class="mini-val">${data.length}</div><div class="mini-label">Sessions</div></div>
+      </div>
+    </div>`;
+}
+
+// ── WEIGHT ─────────────────────────────────────────────────
+let weightView = 'daily'; // 'daily' | 'avg'
+const KG_PER_LB = 1/2.2046;
+
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function fmtWeight(kg) {
+  const v = appData.weightUnit==='lbs' ? kg*2.2046 : kg;
+  return Math.round(v*10)/10;
+}
+
+function renderWeightScreen() {
+  const u = appData.weightUnit;
+  document.getElementById('weight-unit-btn').textContent = u;
+  document.getElementById('weight-unit-lbl').textContent = u;
+  const dateEl = document.getElementById('weight-date');
+  if (!dateEl.value) dateEl.value = todayISO();
+  renderWeightEntryInput();
+  renderWeightChart();
+  renderWeightList();
+}
+
+function renderWeightEntryInput() {
+  const date = document.getElementById('weight-date').value;
+  const existing = appData.weights.find(w=>w.date===date);
+  const inp = document.getElementById('weight-input');
+  const btn = document.getElementById('weight-save-btn');
+  inp.value = existing ? fmtWeight(existing.kg) : '';
+  btn.textContent = existing ? 'Update' : 'Save';
+}
+
+async function saveWeight() {
+  const date = document.getElementById('weight-date').value;
+  const raw = parseFloat(document.getElementById('weight-input').value);
+  if (!date || !raw || raw <= 0) { alert('Enter a valid date and weight.'); return; }
+  const kg = appData.weightUnit==='lbs' ? raw*KG_PER_LB : raw;
+  const i = appData.weights.findIndex(w=>w.date===date);
+  if (i >= 0) appData.weights[i].kg = kg;
+  else appData.weights.push({date, kg});
+  appData.weights.sort((a,b)=>a.date.localeCompare(b.date));
+  await cloudSave();
+  renderWeightScreen();
+}
+
+async function deleteWeight(date) {
+  if (!confirm('Delete this weight entry?')) return;
+  appData.weights = appData.weights.filter(w=>w.date!==date);
+  await cloudSave();
+  renderWeightScreen();
+}
+
+async function toggleWeightUnit() {
+  appData.weightUnit = appData.weightUnit==='kg' ? 'lbs' : 'kg';
+  await cloudSave();
+  renderWeightScreen();
+}
+
+function setWeightView(mode) {
+  weightView = mode;
+  renderWeightChart();
+}
+
+function computeRollingAvg(entries, windowDays=7) {
+  if (!entries.length) return [];
+  const dayMs = 86400000;
+  return entries.map(e => {
+    const t = new Date(e.date).getTime();
+    const window = entries.filter(x => {
+      const xt = new Date(x.date).getTime();
+      return xt <= t && xt > t - windowDays*dayMs;
+    });
+    const avg = window.reduce((a,x)=>a+x.kg, 0) / window.length;
+    return {date: e.date, kg: avg};
+  });
+}
+
+function renderWeightList() {
+  const el = document.getElementById('weight-list');
+  if (!appData.weights.length) { el.innerHTML = ''; return; }
+  const recent = appData.weights.slice().reverse().slice(0, 10);
+  const u = appData.weightUnit;
+  el.innerHTML = `<div style="font-size:11px;font-weight:700;color:var(--text2);letter-spacing:1px;margin-bottom:8px">RECENT ENTRIES</div>` +
+    recent.map(w => `<div class="weight-row">
+      <span>${new Date(w.date).toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</span>
+      <span><strong>${fmtWeight(w.kg)}</strong> ${u}
+        <button class="del-btn" onclick="deleteWeight('${w.date}')" title="Delete">✕</button>
+      </span>
+    </div>`).join('');
+}
+
+function renderWeightChart() {
+  const el = document.getElementById('weight-chart-area');
+  const u = appData.weightUnit;
+  const segHtml = `<div class="seg">
+    <button class="${weightView==='daily'?'active':''}" onclick="setWeightView('daily')">Daily</button>
+    <button class="${weightView==='avg'?'active':''}" onclick="setWeightView('avg')">7-Day Avg</button>
+  </div>`;
+
+  if (appData.weights.length < 2) {
+    el.innerHTML = segHtml + `<div class="chart-wrap" style="text-align:center;color:var(--text2);padding:40px">${
+      appData.weights.length===0 ? 'No data yet — log your first weight above!' : 'Log at least 2 entries to see a chart.'
+    }</div>`;
+    return;
+  }
+
+  const sorted = appData.weights.slice().sort((a,b)=>a.date.localeCompare(b.date));
+  const data = weightView==='avg' ? computeRollingAvg(sorted, 7) : sorted;
+
+  const W=340,H=180,pt={t:20,r:16,b:38,l:46};
+  const cW=W-pt.l-pt.r, cH=H-pt.t-pt.b;
+  const vals = data.map(d => u==='lbs' ? d.kg*2.2046 : d.kg);
+  const mn=Math.min(...vals), mx=Math.max(...vals), rng=mx-mn||1;
+  const t0 = new Date(data[0].date).getTime();
+  const tN = new Date(data[data.length-1].date).getTime();
+  const span = tN - t0 || 1;
+  const pts = data.map((d,i) => ({
+    x: pt.l + ((new Date(d.date).getTime() - t0) / span) * cW,
+    y: pt.t + cH - ((vals[i]-mn)/rng)*cH,
+    date: new Date(d.date).toLocaleDateString('en-US',{month:'short',day:'numeric'}),
+    val: vals[i]
+  }));
+  const poly = pts.map(p=>`${p.x},${p.y}`).join(' ');
+  const area = `${pts[0].x},${pt.t+cH} ${poly} ${pts[pts.length-1].x},${pt.t+cH}`;
+  const yTicks = [0,.5,1].map(t=>({y:pt.t+cH-t*cH, v:Math.round((mn+t*rng)*10)/10}));
+  const step = Math.max(1, Math.floor(pts.length/4));
+  const xTicks = pts.filter((_,i)=>i%step===0||i===pts.length-1);
+  const last = pts[pts.length-1];
+  const diff = vals[vals.length-1] - vals[0];
+  const tc = '#9d93f5';
+
+  // Mini-stats: current, 7-day avg, change vs ~30 days ago
+  const currentKg = sorted[sorted.length-1].kg;
+  const avg7 = computeRollingAvg(sorted, 7);
+  const avg7Last = avg7[avg7.length-1].kg;
+  const dayMs = 86400000;
+  const tLast = new Date(sorted[sorted.length-1].date).getTime();
+  const ref = sorted.slice().reverse().find(w => new Date(w.date).getTime() <= tLast - 30*dayMs);
+  const change30 = ref ? currentKg - ref.kg : null;
+
+  el.innerHTML = segHtml + `
+    <div class="chart-wrap">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px">
+        <div style="font-weight:700;font-size:15px">${weightView==='avg' ? '7-Day Avg' : 'Daily'}</div>
+        <div style="font-size:13px;color:${tc};font-weight:700">${(diff>=0?'+':'')+Math.round(diff*10)/10} ${u} overall</div>
+      </div>
+      <svg class="chart" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+        <defs><linearGradient id="gw" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#7c6fef" stop-opacity=".35"/>
+          <stop offset="100%" stop-color="#7c6fef" stop-opacity="0"/>
+        </linearGradient></defs>
+        ${yTicks.map(t=>`<line x1="${pt.l}" y1="${t.y}" x2="${W-pt.r}" y2="${t.y}" stroke="#2a2a2a" stroke-width="1"/>
+          <text x="${pt.l-6}" y="${t.y+4}" text-anchor="end" fill="#666" font-size="10">${t.v}</text>`).join('')}
+        <polygon points="${area}" fill="url(#gw)"/>
+        <polyline points="${poly}" fill="none" stroke="#7c6fef" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+        ${weightView==='daily' ? pts.map(p=>`<circle cx="${p.x}" cy="${p.y}" r="3.5" fill="#7c6fef" stroke="#1a1a1a" stroke-width="2"/>`).join('') : ''}
+        ${xTicks.map(p=>`<text x="${p.x}" y="${H-4}" text-anchor="middle" fill="#666" font-size="10">${p.date}</text>`).join('')}
+        <text x="${last.x}" y="${last.y-10}" text-anchor="middle" fill="#9d93f5" font-size="11" font-weight="700">${Math.round(last.val*10)/10} ${u}</text>
+      </svg>
+      <div class="mini-stats">
+        <div class="mini-stat"><div class="mini-val">${fmtWeight(currentKg)}</div><div class="mini-label">Current (${u})</div></div>
+        <div class="mini-stat"><div class="mini-val">${fmtWeight(avg7Last)}</div><div class="mini-label">7-Day Avg (${u})</div></div>
+        <div class="mini-stat"><div class="mini-val">${change30===null?'—':(change30>=0?'+':'')+fmtWeight(change30)}</div><div class="mini-label">vs 30d ago</div></div>
       </div>
     </div>`;
 }
