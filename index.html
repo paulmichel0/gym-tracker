@@ -146,6 +146,7 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
         <div style="font-size:12px;color:var(--text2);margin-bottom:2px" id="workout-date-lbl"></div>
         <h1>Today's Workout</h1>
       </div>
+      <button class="del-btn" onclick="discardWorkout()" title="Discard workout">Discard</button>
     </div>
     <div id="exercises-list"></div>
     <button class="btn btn-secondary" onclick="openPicker()" style="margin-bottom:8px">
@@ -256,6 +257,7 @@ const CLIENT_ID = '420878520483-o8a69rv3c0hdtehgt174jtqngcnik42j.apps.googleuser
 
 const SCOPE     = 'https://www.googleapis.com/auth/drive.appdata';
 const FILE_NAME = 'gym-tracker-data.json';
+const ACTIVE_KEY = 'gym-tracker-active-workout';
 
 // ── EXERCISES ──────────────────────────────────────────────
 const BASE = {
@@ -348,6 +350,24 @@ function setSyncStatus(s) {
   t.textContent = s==='saving'?'Saving…': s==='saved'?'Synced':'Sync error';
 }
 
+// ── ACTIVE WORKOUT PERSISTENCE (localStorage, survives reloads/PWA kills) ──
+function saveActive() {
+  try { if (wk) localStorage.setItem(ACTIVE_KEY, JSON.stringify(wk)); else localStorage.removeItem(ACTIVE_KEY); }
+  catch(e) { /* storage full or disabled — ignore */ }
+}
+function loadActive() {
+  try {
+    const raw = localStorage.getItem(ACTIVE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.exercises)) wk = parsed;
+    }
+  } catch(e) { /* corrupt — ignore */ }
+}
+function clearActive() {
+  try { localStorage.removeItem(ACTIVE_KEY); } catch(e) {}
+}
+
 // ── AUTH ───────────────────────────────────────────────────
 function onGISLoad() {
   tokenClient = google.accounts.oauth2.initTokenClient({
@@ -390,6 +410,7 @@ function showApp() {
   const app = document.getElementById('app');
   app.style.display = 'flex';
   app.style.flexDirection = 'column';
+  loadActive();
   renderHome();
 }
 
@@ -422,6 +443,11 @@ function renderHome() {
   document.getElementById('home-stats').innerHTML = `
     <div class="stat-box"><div class="stat-val">${n}</div><div class="stat-label">Total Workouts</div></div>
     <div class="stat-box"><div class="stat-val">${last}</div><div class="stat-label">Last Workout</div></div>`;
+  const resuming = wk && wk.exercises.length;
+  const startBtn = document.querySelector('#screen-home .btn-primary');
+  if (startBtn) startBtn.innerHTML = resuming
+    ? `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg> Resume Workout (${wk.exercises.length} ex)`
+    : `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Start Workout`;
   const recent = appData.workouts.slice(-3).reverse();
   document.getElementById('home-recent').innerHTML = recent.length ? `
     <div style="font-size:11px;font-weight:700;color:var(--text2);letter-spacing:1px;margin-bottom:8px">RECENT</div>
@@ -434,10 +460,20 @@ function renderHome() {
 
 // ── WORKOUT ────────────────────────────────────────────────
 function startWorkout() {
-  if (!wk) wk = {date:new Date().toISOString(), exercises:[]};
+  if (!wk) { wk = {date:new Date().toISOString(), exercises:[]}; saveActive(); }
   document.getElementById('workout-date-lbl').textContent = new Date(wk.date).toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
   goTo('workout');
   renderExList();
+}
+
+function discardWorkout() {
+  if (!wk) return;
+  if (!confirm('Discard the current workout? All entered sets will be lost.')) return;
+  wk = null;
+  clearActive();
+  document.getElementById('exercises-list').innerHTML = '';
+  document.getElementById('finish-fab').style.display = 'none';
+  goTo('home');
 }
 
 function renderExList() {
@@ -472,11 +508,11 @@ function renderExList() {
             <button class="warmup-btn${s.warmup?' on':''}" onclick="togWarmup(${ei},${si})" title="Warm-up">W</button>
             <span class="set-num">${si+1}</span>
             <div class="weight-wrap">
-              <input type="number" inputmode="decimal" placeholder="0" value="${s.w||''}" onchange="upd(${ei},${si},'w',this.value)">
+              <input type="number" inputmode="decimal" placeholder="0" value="${s.w||''}" oninput="upd(${ei},${si},'w',this.value)">
               <button class="unit-btn ${s.u==='kg'?'active':''}" onclick="togUnit(${ei},${si})">${s.u}</button>
             </div>
             <div class="reps-wrap">
-              <input type="number" inputmode="numeric" placeholder="0" value="${s.r||''}" onchange="upd(${ei},${si},'r',this.value)">
+              <input type="number" inputmode="numeric" placeholder="0" value="${s.r||''}" oninput="upd(${ei},${si},'r',this.value)">
               <span class="reps-label">reps</span>
             </div>
             <button class="btn-danger" onclick="removeSet(${ei},${si})">
@@ -492,26 +528,30 @@ function renderExList() {
 function addSet(ei) {
   const last = wk.exercises[ei].sets.slice(-1)[0]||{w:'',u:'kg',r:'',warmup:false};
   wk.exercises[ei].sets.push({w:last.w, u:last.u, r:'', warmup:false});
+  saveActive();
   renderExList();
 }
 function removeSet(ei,si) {
   wk.exercises[ei].sets.splice(si,1);
-  if (!wk.exercises[ei].sets.length) addSet(ei); else renderExList();
+  if (!wk.exercises[ei].sets.length) addSet(ei); else { saveActive(); renderExList(); }
 }
 function upd(ei,si,f,v) {
   wk.exercises[ei].sets[si][f] = f==='w' ? (parseFloat(v)||'') : (parseInt(v)||'');
+  saveActive();
 }
 function togUnit(ei,si) {
   const s = wk.exercises[ei].sets[si];
   if (s.u==='kg') { s.u='lbs'; s.w=s.w?Math.round(s.w*2.2046*10)/10:''; }
   else             { s.u='kg';  s.w=s.w?Math.round(s.w/2.2046*10)/10:''; }
+  saveActive();
   renderExList();
 }
 function togWarmup(ei,si) {
   wk.exercises[ei].sets[si].warmup = !wk.exercises[ei].sets[si].warmup;
+  saveActive();
   renderExList();
 }
-function removeEx(ei) { wk.exercises.splice(ei,1); renderExList(); }
+function removeEx(ei) { wk.exercises.splice(ei,1); saveActive(); renderExList(); }
 
 function exportData() {
   const blob = new Blob([JSON.stringify(appData, null, 2)], {type:'application/json'});
@@ -552,6 +592,7 @@ async function finishWorkout() {
     return;
   }
   wk = null;
+  clearActive();
   document.getElementById('exercises-list').innerHTML = '';
   document.getElementById('finish-fab').style.display = 'none';
   goTo('home');
@@ -589,7 +630,10 @@ function filterEx() {
 
 function pickEx(name) {
   if (!wk) return;
-  if (!wk.exercises.some(e=>e.name===name)) wk.exercises.push({name, sets:[{w:'',u:'kg',r:'',warmup:false}]});
+  if (!wk.exercises.some(e=>e.name===name)) {
+    wk.exercises.push({name, sets:[{w:'',u:'kg',r:'',warmup:false}]});
+    saveActive();
+  }
   document.getElementById('modal').classList.remove('open');
   renderExList();
 }
