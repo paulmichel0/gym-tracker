@@ -191,18 +191,8 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
         <div style="font-size:11px;font-weight:700;color:var(--text2);letter-spacing:1px">TARGET TRAJECTORY</div>
         <button class="del-btn" id="target-clear-btn" onclick="clearTarget()" title="Clear target" style="display:none">✕</button>
       </div>
-      <div style="display:flex;gap:8px;margin-bottom:8px">
-        <div style="flex:1">
-          <div style="font-size:11px;color:var(--text2);margin-bottom:3px">Start date</div>
-          <input type="date" id="target-date">
-        </div>
-        <div style="flex:1">
-          <div style="font-size:11px;color:var(--text2);margin-bottom:3px">Start <span class="target-unit"></span></div>
-          <input type="number" inputmode="decimal" step="0.1" id="target-weight" placeholder="0">
-        </div>
-      </div>
       <div style="margin-bottom:10px">
-        <div style="font-size:11px;color:var(--text2);margin-bottom:3px">Weekly change (<span class="target-unit"></span>/week, e.g. 0.25 to gain, -0.5 to lose)</div>
+        <div style="font-size:11px;color:var(--text2);margin-bottom:3px">Weekly change (<span class="target-unit"></span>/week, e.g. 0.25 to gain, -0.5 to lose). Anchored to your first logged weight.</div>
         <input type="number" inputmode="decimal" step="0.05" id="target-rate" placeholder="0">
       </div>
       <button class="btn btn-secondary btn-sm" onclick="saveTarget()">Save Target</button>
@@ -788,8 +778,14 @@ function renderProgressScreen() {
   appData.workouts.forEach(w => {
     w.exercises.forEach(ex => {
       if (!exMap[ex.name]) exMap[ex.name] = [];
-      const maxKg = Math.max(...ex.sets.map(s=>{ const v=parseFloat(s.w)||0; return s.u==='lbs'?v/2.2046:v; }));
-      exMap[ex.name].push({date:w.date, maxKg});
+      let best = {kg: -Infinity, reps: 0};
+      ex.sets.forEach(s => {
+        const v = parseFloat(s.w) || 0;
+        const kg = s.u === 'lbs' ? v/2.2046 : v;
+        const reps = parseInt(s.r) || 0;
+        if (kg > best.kg) best = {kg, reps};
+      });
+      if (best.kg > -Infinity) exMap[ex.name].push({date: w.date, maxKg: best.kg, reps: best.reps});
     });
   });
   const sel = document.getElementById('prog-select'), prev = sel.value;
@@ -814,7 +810,8 @@ function renderChart() {
     x:pt.l+(i/(data.length-1))*cW,
     y:pt.t+cH-((d.maxKg-mn)/rng)*cH,
     date:new Date(d.date).toLocaleDateString('en-US',{month:'short',day:'numeric'}),
-    val:d.maxKg
+    val:d.maxKg,
+    reps:d.reps||0
   }));
   const poly=pts.map(p=>`${p.x},${p.y}`).join(' ');
   const area=`${pts[0].x},${pt.t+cH} ${poly} ${pts[pts.length-1].x},${pt.t+cH}`;
@@ -841,7 +838,14 @@ function renderChart() {
         <polyline points="${poly}" fill="none" stroke="#7c6fef" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
         ${pts.map(p=>`<circle cx="${p.x}" cy="${p.y}" r="4" fill="#7c6fef" stroke="#1a1a1a" stroke-width="2"/>`).join('')}
         ${xTicks.map(p=>`<text x="${p.x}" y="${H-4}" text-anchor="middle" fill="#666" font-size="10">${p.date}</text>`).join('')}
-        <text x="${last.x}" y="${last.y-10}" text-anchor="middle" fill="#9d93f5" font-size="11" font-weight="700">${Math.round(last.val*10)/10} kg</text>
+        ${pts.map((p,i)=>{
+          const isLast = i === pts.length-1;
+          if (!isLast && i % step !== 0) return '';
+          const label = `${Math.round(p.val*10)/10} × ${p.reps}`;
+          return isLast
+            ? `<text x="${p.x}" y="${p.y-10}" text-anchor="middle" fill="#9d93f5" font-size="11" font-weight="700">${label}</text>`
+            : `<text x="${p.x}" y="${p.y-8}" text-anchor="middle" fill="#888" font-size="9">${label}</text>`;
+        }).join('')}
       </svg>
       <div class="mini-stats">
         <div class="mini-stat"><div class="mini-val">${Math.round(Math.max(...vals)*10)/10}</div><div class="mini-label">Max (kg)</div></div>
@@ -853,6 +857,7 @@ function renderChart() {
 
 // ── WEIGHT ─────────────────────────────────────────────────
 let weightView = 'daily'; // 'daily' | 'avg'
+let weightRange = 'all';  // 'week' | 'biweek' | 'month' | 'all'
 const KG_PER_LB = 1/2.2046;
 
 function todayISO() {
@@ -878,25 +883,17 @@ function renderWeightScreen() {
 }
 
 function renderTargetInputs() {
-  const first = appData.weights[0];
-  const dEl = document.getElementById('target-date');
-  const wEl = document.getElementById('target-weight');
   const rEl = document.getElementById('target-rate');
-  dEl.value = appData.targetAnchorDate || (first ? first.date : todayISO());
-  wEl.value = appData.targetAnchorKg != null ? fmtWeight(appData.targetAnchorKg) : (first ? fmtWeight(first.kg) : '');
   const rateDisp = appData.weightUnit==='lbs' ? appData.targetWeeklyKg*2.2046 : appData.targetWeeklyKg;
   rEl.value = appData.targetWeeklyKg ? Math.round(rateDisp*100)/100 : '';
-  const hasTarget = appData.targetAnchorDate && appData.targetAnchorKg != null && appData.targetWeeklyKg;
-  document.getElementById('target-clear-btn').style.display = hasTarget ? 'inline-block' : 'none';
+  document.getElementById('target-clear-btn').style.display = appData.targetWeeklyKg ? 'inline-block' : 'none';
 }
 
 async function saveTarget() {
-  const date = document.getElementById('target-date').value;
-  const w = parseFloat(document.getElementById('target-weight').value);
   const r = parseFloat(document.getElementById('target-rate').value);
-  if (!date || !w || isNaN(r)) { alert('Enter start date, start weight, and weekly rate.'); return; }
-  appData.targetAnchorDate = date;
-  appData.targetAnchorKg = appData.weightUnit==='lbs' ? w*KG_PER_LB : w;
+  if (isNaN(r) || r === 0) { alert('Enter a non-zero weekly rate.'); return; }
+  appData.targetAnchorDate = null;
+  appData.targetAnchorKg = null;
   appData.targetWeeklyKg = appData.weightUnit==='lbs' ? r*KG_PER_LB : r;
   await cloudSave();
   renderWeightScreen();
@@ -951,6 +948,11 @@ function setWeightView(mode) {
   renderWeightChart();
 }
 
+function setWeightRange(r) {
+  weightRange = r;
+  renderWeightChart();
+}
+
 function computeRollingAvg(entries, windowDays=7) {
   if (!entries.length) return [];
   const dayMs = 86400000;
@@ -982,10 +984,17 @@ function renderWeightList() {
 function renderWeightChart() {
   const el = document.getElementById('weight-chart-area');
   const u = appData.weightUnit;
-  const segHtml = `<div class="seg">
+  const rangeHtml = `<div class="seg">
+    <button class="${weightRange==='week'?'active':''}" onclick="setWeightRange('week')">1W</button>
+    <button class="${weightRange==='biweek'?'active':''}" onclick="setWeightRange('biweek')">2W</button>
+    <button class="${weightRange==='month'?'active':''}" onclick="setWeightRange('month')">1M</button>
+    <button class="${weightRange==='all'?'active':''}" onclick="setWeightRange('all')">All</button>
+  </div>`;
+  const viewHtml = `<div class="seg">
     <button class="${weightView==='daily'?'active':''}" onclick="setWeightView('daily')">Daily</button>
     <button class="${weightView==='avg'?'active':''}" onclick="setWeightView('avg')">7-Day Avg</button>
   </div>`;
+  const segHtml = rangeHtml + viewHtml;
 
   if (appData.weights.length < 2) {
     el.innerHTML = segHtml + `<div class="chart-wrap" style="text-align:center;color:var(--text2);padding:40px">${
@@ -995,7 +1004,17 @@ function renderWeightChart() {
   }
 
   const sorted = appData.weights.slice().sort((a,b)=>a.date.localeCompare(b.date));
-  const data = weightView==='avg' ? computeRollingAvg(sorted, 7) : sorted;
+  const dayMs = 86400000;
+  const cutoffByRange = {week:7, biweek:14, month:30};
+  const cutoff = weightRange==='all' ? null : Date.now() - cutoffByRange[weightRange]*dayMs;
+  const viewSorted = cutoff==null ? sorted : sorted.filter(d => new Date(d.date).getTime() >= cutoff);
+
+  if (viewSorted.length < 2) {
+    el.innerHTML = segHtml + `<div class="chart-wrap" style="text-align:center;color:var(--text2);padding:40px">Log at least 2 entries in this range to see a chart.</div>`;
+    return;
+  }
+
+  const data = weightView==='avg' ? computeRollingAvg(viewSorted, 7) : viewSorted;
 
   const W=340,H=180,pt={t:20,r:16,b:38,l:46};
   const cW=W-pt.l-pt.r, cH=H-pt.t-pt.b;
@@ -1004,16 +1023,16 @@ function renderWeightChart() {
   const t0 = new Date(data[0].date).getTime();
   const tN = new Date(data[data.length-1].date).getTime();
   const span = tN - t0 || 1;
-  const dayMs = 86400000;
 
-  // Target trajectory: line spanning chart x-range based on anchor + weekly rate
-  const hasTarget = appData.targetAnchorDate && appData.targetAnchorKg != null && appData.targetWeeklyKg;
+  // Target trajectory: anchored to first ever observation, projected at weekly rate.
+  const hasTarget = !!appData.targetWeeklyKg;
   let targetStart=null, targetEnd=null;
   if (hasTarget) {
-    const tAnchor = new Date(appData.targetAnchorDate).getTime();
+    const firstKg = sorted[0].kg;
+    const tFirst  = new Date(sorted[0].date).getTime();
     const ratePerMs = appData.targetWeeklyKg / (7*dayMs);
-    targetStart = toDisp(appData.targetAnchorKg + (t0 - tAnchor)*ratePerMs);
-    targetEnd   = toDisp(appData.targetAnchorKg + (tN - tAnchor)*ratePerMs);
+    targetStart = toDisp(firstKg + (t0 - tFirst)*ratePerMs);
+    targetEnd   = toDisp(firstKg + (tN - tFirst)*ratePerMs);
   }
 
   // Y-range includes target endpoints so the line is always visible
@@ -1045,8 +1064,8 @@ function renderWeightChart() {
   const change30 = ref ? currentKg - ref.kg : null;
   let vsTarget = null;
   if (hasTarget) {
-    const tAnchor = new Date(appData.targetAnchorDate).getTime();
-    const expectedKg = appData.targetAnchorKg + (tLast - tAnchor)*(appData.targetWeeklyKg/(7*dayMs));
+    const tFirst = new Date(sorted[0].date).getTime();
+    const expectedKg = sorted[0].kg + (tLast - tFirst)*(appData.targetWeeklyKg/(7*dayMs));
     vsTarget = currentKg - expectedKg;
   }
 
