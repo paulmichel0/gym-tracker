@@ -1024,12 +1024,12 @@ function renderWeightChart() {
   const tN = new Date(data[data.length-1].date).getTime();
   const span = tN - t0 || 1;
 
-  // Target trajectory: anchored to first ever observation, projected at weekly rate.
+  // Target trajectory: anchored to first observation within the current view window.
   const hasTarget = !!appData.targetWeeklyKg;
   let targetStart=null, targetEnd=null;
   if (hasTarget) {
-    const firstKg = sorted[0].kg;
-    const tFirst  = new Date(sorted[0].date).getTime();
+    const firstKg = viewSorted[0].kg;
+    const tFirst  = new Date(viewSorted[0].date).getTime();
     const ratePerMs = appData.targetWeeklyKg / (7*dayMs);
     targetStart = toDisp(firstKg + (t0 - tFirst)*ratePerMs);
     targetEnd   = toDisp(firstKg + (tN - tFirst)*ratePerMs);
@@ -1064,8 +1064,8 @@ function renderWeightChart() {
   const change30 = ref ? currentKg - ref.kg : null;
   let vsTarget = null;
   if (hasTarget) {
-    const tFirst = new Date(sorted[0].date).getTime();
-    const expectedKg = sorted[0].kg + (tLast - tFirst)*(appData.targetWeeklyKg/(7*dayMs));
+    const tFirst = new Date(viewSorted[0].date).getTime();
+    const expectedKg = viewSorted[0].kg + (tLast - tFirst)*(appData.targetWeeklyKg/(7*dayMs));
     vsTarget = currentKg - expectedKg;
   }
 
