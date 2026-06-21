@@ -90,6 +90,7 @@ input:focus,select:focus{outline:none;border-color:var(--accent)}
 .weight-row strong{color:var(--accent2);font-weight:700}
 svg.chart{width:100%;height:180px;display:block}
 .mini-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:12px}
+.mini-stats.four{grid-template-columns:1fr 1fr}
 .mini-stat{text-align:center}
 .mini-val{font-size:18px;font-weight:700;color:var(--accent2)}
 .mini-label{font-size:11px;color:var(--text2)}
@@ -165,8 +166,10 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
   <!-- PROGRESS -->
   <div id="screen-progress" class="screen">
     <div class="header"><h1>Progress</h1></div>
-    <select id="prog-select" onchange="renderChart()" style="margin-bottom:14px"></select>
+    <select id="prog-select" onchange="onProgChange()" style="margin-bottom:10px"></select>
+    <div id="prog-metric"></div>
     <div id="chart-area"></div>
+    <div id="muscle-balance" style="margin-top:18px"></div>
   </div>
 
   <!-- WEIGHT -->
@@ -425,13 +428,81 @@ function goTo(name) {
   if(name==='weight') renderWeightScreen();
 }
 
+// ── SHARED STATS HELPERS ───────────────────────────────────
+function e1RM(kg, reps){ return reps>0 ? kg*(1+reps/30) : kg; }       // Epley; reps=1 → kg
+const EX_CAT = Object.fromEntries(Object.entries(BASE).flatMap(([c,xs])=>xs.map(x=>[x,c])));
+function exCategory(n){ return EX_CAT[n] || 'Other'; }
+function setKg(s){ const v=parseFloat(s.w)||0; return s.u==='lbs' ? v/2.2046 : v; }
+function workoutVolumeKg(w){ let v=0; for(const ex of w.exercises) for(const s of ex.sets){ if(s.warmup) continue; v += setKg(s)*(parseInt(s.r)||0); } return v; }
+// Local YYYY-MM-DD for a date (matches weight-entry date keys)
+function localDayKey(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+// Monday-based week key (year + week index), for streak grouping
+function weekKey(d){
+  const x=new Date(d.getFullYear(),d.getMonth(),d.getDate());
+  const day=(x.getDay()+6)%7;           // Mon=0 … Sun=6
+  x.setDate(x.getDate()-day);           // back to Monday
+  return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`;
+}
+
+// SVG tooltip bubble for tapped chart points; clamps horizontally so it never clips at edges
+function chartTip(p, text, W){
+  const w = text.length*6.2 + 14, h = 20;
+  let x = p.x - w/2; x = Math.max(2, Math.min(x, W - w - 2));
+  const y = Math.max(2, p.y - h - 8);
+  return `<rect x="${x}" y="${y}" rx="5" width="${w}" height="${h}" fill="#000" opacity="0.85" stroke="#7c6fef"/>`
+       + `<text x="${x+w/2}" y="${y+14}" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">${text}</text>`;
+}
+
 // ── HOME ───────────────────────────────────────────────────
+// Consecutive-week training streak (Monday-based weeks)
+function weekStreaks() {
+  const keys = [...new Set(appData.workouts.map(w=>weekKey(new Date(w.date))))].sort();
+  if (!keys.length) return {current:0, longest:0};
+  const WK = 7*86400000;
+  const idx = keys.map(k=>Math.round(new Date(k).getTime()/WK));
+  let longest=1, run=1;
+  for (let i=1;i<idx.length;i++){ run = idx[i]===idx[i-1]+1 ? run+1 : 1; longest=Math.max(longest,run); }
+  let cur=1;
+  for (let i=idx.length-1;i>0;i--){ if (idx[i]===idx[i-1]+1) cur++; else break; }
+  const thisIdx = Math.round(new Date(weekKey(new Date())).getTime()/WK);
+  if (idx[idx.length-1] < thisIdx-1) cur=0;   // missed both this and last week → broken
+  return {current:cur, longest};
+}
+
+// GitHub-style training heatmap (last 16 weeks), shaded by daily volume
+function heatmapSvg() {
+  const WEEKS=16, CELL=12, GAP=3, STEP=CELL+GAP;
+  const volByDay={};
+  appData.workouts.forEach(w=>{ const k=localDayKey(new Date(w.date)); volByDay[k]=(volByDay[k]||0)+workoutVolumeKg(w); });
+  const maxVol = Math.max(0, ...Object.values(volByDay));
+  const today=new Date();
+  const monday=new Date(today); monday.setDate(today.getDate()-((today.getDay()+6)%7));
+  const start=new Date(monday); start.setDate(monday.getDate()-(WEEKS-1)*7);
+  const todayKey=localDayKey(today);
+  let cells='';
+  for (let c=0;c<WEEKS;c++) for (let r=0;r<7;r++){
+    const d=new Date(start); d.setDate(start.getDate()+c*7+r);
+    if (d>today) continue;
+    const k=localDayKey(d), vol=volByDay[k]||0;
+    const fill = vol>0 ? `fill="#7c6fef" opacity="${(0.3+0.7*(maxVol?vol/maxVol:1)).toFixed(2)}"` : `fill="#222"`;
+    const ring = k===todayKey ? ` stroke="#9d93f5" stroke-width="1.5"` : '';
+    cells += `<rect x="${c*STEP}" y="${r*STEP}" width="${CELL}" height="${CELL}" rx="2.5" ${fill}${ring}/>`;
+  }
+  const W=WEEKS*STEP-GAP, H=7*STEP-GAP;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;display:block;margin:auto">${cells}</svg>`;
+}
+
 function renderHome() {
   document.getElementById('home-date').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
   const n = appData.workouts.length;
   const last = n ? new Date(appData.workouts[n-1].date).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '—';
+  const twk = weekKey(new Date());
+  const thisWeek = appData.workouts.filter(w=>weekKey(new Date(w.date))===twk).length;
+  const {current:streak} = weekStreaks();
   document.getElementById('home-stats').innerHTML = `
     <div class="stat-box"><div class="stat-val">${n}</div><div class="stat-label">Total Workouts</div></div>
+    <div class="stat-box"><div class="stat-val">${thisWeek}</div><div class="stat-label">This Week</div></div>
+    <div class="stat-box"><div class="stat-val">${streak}${streak?'🔥':''}</div><div class="stat-label">Week Streak</div></div>
     <div class="stat-box"><div class="stat-val">${last}</div><div class="stat-label">Last Workout</div></div>`;
   const resuming = wk && wk.exercises.length;
   const startBtn = document.querySelector('#screen-home .btn-primary');
@@ -439,7 +510,26 @@ function renderHome() {
     ? `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg> Resume Workout (${wk.exercises.length} ex)`
     : `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Start Workout`;
   const recent = appData.workouts.slice(-3).reverse();
-  document.getElementById('home-recent').innerHTML = recent.length ? `
+  let extra = '';
+  if (n) {
+    const totalKg = appData.workouts.reduce((a,w)=>a+workoutVolumeKg(w),0);
+    const tonStr = appData.weightUnit==='lbs'
+      ? `${(totalKg*2.2046/1000).toFixed(1)}k lbs`
+      : `${(totalKg/1000).toFixed(1)} t`;
+    extra = `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">
+        <div style="font-size:11px;font-weight:700;color:var(--text2);letter-spacing:1px">CONSISTENCY</div>
+        <div style="font-size:12px;color:var(--text2)">last 16 weeks</div>
+      </div>
+      ${heatmapSvg()}
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="font-size:13px;color:var(--text2)">Total volume lifted</div>
+        <div style="font-weight:700;color:var(--accent2)">${tonStr}</div>
+      </div>
+    </div>`;
+  }
+  document.getElementById('home-recent').innerHTML = recent.length ? extra + `
     <div style="font-size:11px;font-weight:700;color:var(--text2);letter-spacing:1px;margin-bottom:8px">RECENT</div>
     ${recent.map(w=>`<div class="card">
       <div style="font-weight:600">${new Date(w.date).toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</div>
@@ -555,6 +645,7 @@ function exportData() {
 function getExStats(name) {
   let last = null, pr = null;
   for (const w of appData.workouts) {
+    let sessionBest = null;
     for (const ex of w.exercises) {
       if (ex.name !== name) continue;
       for (const s of ex.sets) {
@@ -562,10 +653,11 @@ function getExStats(name) {
         const wKg = s.u === 'lbs' ? (parseFloat(s.w)||0)/2.2046 : (parseFloat(s.w)||0);
         if (wKg <= 0) continue;
         const entry = {w: parseFloat(s.w)||0, u: s.u, r: parseInt(s.r)||0, wKg, date: w.date};
-        last = entry;
+        if (!sessionBest || wKg > sessionBest.wKg || (wKg === sessionBest.wKg && entry.r > sessionBest.r)) sessionBest = entry;
         if (!pr || wKg > pr.wKg || (wKg === pr.wKg && entry.r > pr.r)) pr = entry;
       }
     }
+    if (sessionBest) last = sessionBest;   // heaviest set of the most recent session containing this exercise
   }
   return {last, pr};
 }
@@ -773,27 +865,53 @@ async function deleteExercise(wi, ei) {
 
 // ── PROGRESS ───────────────────────────────────────────────
 let exMap = {};
+let progMetric = 'top';   // 'top' | 'e1rm' | 'vol'
+let progSel = -1;         // tapped point index (-1 = none)
+let mbRange = 'month';    // muscle-balance window: 'week' | 'month' | 'all'
+
+const PROG_METRICS = {
+  top:  {key:'maxKg', label:'Top set', unit:'kg', overall:'kg'},
+  e1rm: {key:'e1rm',  label:'Est 1RM', unit:'kg', overall:'kg'},
+  vol:  {key:'vol',   label:'Volume',  unit:'',   overall:'kg·reps'}
+};
+
 function renderProgressScreen() {
   exMap = {};
   appData.workouts.forEach(w => {
     w.exercises.forEach(ex => {
-      if (!exMap[ex.name]) exMap[ex.name] = [];
-      let best = {kg: -Infinity, reps: 0};
+      let best = {kg: -Infinity, reps: 0}, bestE = 0, vol = 0;
       ex.sets.forEach(s => {
-        const v = parseFloat(s.w) || 0;
-        const kg = s.u === 'lbs' ? v/2.2046 : v;
+        if (s.warmup) return;
+        const kg = setKg(s); if (kg <= 0) return;
         const reps = parseInt(s.r) || 0;
         if (kg > best.kg) best = {kg, reps};
+        const e = e1RM(kg, reps); if (e > bestE) bestE = e;
+        vol += kg * reps;
       });
-      if (best.kg > -Infinity) exMap[ex.name].push({date: w.date, maxKg: best.kg, reps: best.reps});
+      if (best.kg > -Infinity) {
+        if (!exMap[ex.name]) exMap[ex.name] = [];
+        exMap[ex.name].push({date: w.date, maxKg: best.kg, reps: best.reps, e1rm: bestE, vol});
+      }
     });
   });
   const sel = document.getElementById('prog-select'), prev = sel.value;
   const names = Object.keys(exMap);
   sel.innerHTML = names.length ? names.map(n=>`<option value="${n}">${n}</option>`).join('') : '<option>No data yet</option>';
   if (prev && names.includes(prev)) sel.value = prev;
+  progSel = -1;
+  renderMetricToggle();
   renderChart();
+  renderMuscleBalance();
 }
+
+function renderMetricToggle() {
+  document.getElementById('prog-metric').innerHTML = `<div class="seg" style="margin-bottom:10px">${
+    Object.entries(PROG_METRICS).map(([k,m])=>`<button class="${progMetric===k?'active':''}" onclick="setProgMetric('${k}')">${m.label}</button>`).join('')
+  }</div>`;
+}
+function setProgMetric(m){ progMetric = m; progSel = -1; renderMetricToggle(); renderChart(); }
+function onProgChange(){ progSel = -1; renderChart(); }
+function tapProg(i){ progSel = (progSel===i ? -1 : i); renderChart(); }
 
 function renderChart() {
   const name = document.getElementById('prog-select').value;
@@ -802,30 +920,37 @@ function renderChart() {
     el.innerHTML = `<div class="chart-wrap" style="text-align:center;color:var(--text2);padding:40px">${data?'Need at least 2 sessions to show a chart.':'No data yet — log some workouts first!'}</div>`;
     return;
   }
+  const M = PROG_METRICS[progMetric];
   const W=340,H=180,pt={t:20,r:16,b:38,l:46};
   const cW=W-pt.l-pt.r, cH=H-pt.t-pt.b;
-  const vals=data.map(d=>d.maxKg);
+  const vals=data.map(d=>d[M.key]);
   const mn=Math.min(...vals), mx=Math.max(...vals), rng=mx-mn||1;
+  const fmtVal = v => Math.round(v*10)/10;
   const pts=data.map((d,i)=>({
     x:pt.l+(i/(data.length-1))*cW,
-    y:pt.t+cH-((d.maxKg-mn)/rng)*cH,
+    y:pt.t+cH-((d[M.key]-mn)/rng)*cH,
     date:new Date(d.date).toLocaleDateString('en-US',{month:'short',day:'numeric'}),
-    val:d.maxKg,
+    val:d[M.key],
     reps:d.reps||0
   }));
   const poly=pts.map(p=>`${p.x},${p.y}`).join(' ');
   const area=`${pts[0].x},${pt.t+cH} ${poly} ${pts[pts.length-1].x},${pt.t+cH}`;
-  const yTicks=[0,.5,1].map(t=>({y:pt.t+cH-t*cH,v:Math.round((mn+t*rng)*10)/10}));
+  const yTicks=[0,.5,1].map(t=>({y:pt.t+cH-t*cH,v:fmtVal(mn+t*rng)}));
   const step=Math.max(1,Math.floor(data.length/4));
   const xTicks=pts.filter((_,i)=>i%step===0||i===pts.length-1);
   const last=pts[pts.length-1];
   const diff=vals[vals.length-1]-vals[0];
   const tc=diff>=0?'#22c55e':'#ef4444';
+  const tipText = p => progMetric==='top' ? `${fmtVal(p.val)} kg × ${p.reps}` : progMetric==='e1rm' ? `${fmtVal(p.val)} kg · ${p.date}` : `${fmtVal(p.val)} kg·reps · ${p.date}`;
+  // Relative strength (best e1RM ÷ latest bodyweight) — only if weight data exists
+  const bestE1RM = Math.max(...data.map(d=>d.e1rm));
+  const bw = appData.weights.length ? appData.weights[appData.weights.length-1].kg : null;
+  const relStr = bw ? (bestE1RM/bw) : null;
   el.innerHTML=`
     <div class="chart-wrap">
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px">
         <div style="font-weight:700;font-size:15px">${name}</div>
-        <div style="font-size:13px;color:${tc};font-weight:700">${(diff>=0?'+':'')+Math.round(diff*10)/10} kg overall</div>
+        <div style="font-size:13px;color:${tc};font-weight:700">${(diff>=0?'+':'')+fmtVal(diff)} ${M.overall} overall</div>
       </div>
       <svg class="chart" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
         <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
@@ -836,28 +961,64 @@ function renderChart() {
           <text x="${pt.l-6}" y="${t.y+4}" text-anchor="end" fill="#666" font-size="10">${t.v}</text>`).join('')}
         <polygon points="${area}" fill="url(#g)"/>
         <polyline points="${poly}" fill="none" stroke="#7c6fef" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
-        ${pts.map(p=>`<circle cx="${p.x}" cy="${p.y}" r="4" fill="#7c6fef" stroke="#1a1a1a" stroke-width="2"/>`).join('')}
+        ${pts.map((p,i)=>`<circle cx="${p.x}" cy="${p.y}" r="${i===progSel?6:4}" fill="${i===progSel?'#9d93f5':'#7c6fef'}" stroke="#1a1a1a" stroke-width="2"/>`).join('')}
+        ${pts.map((p,i)=>`<circle cx="${p.x}" cy="${p.y}" r="12" fill="transparent" onclick="tapProg(${i})" style="cursor:pointer"/>`).join('')}
         ${xTicks.map(p=>`<text x="${p.x}" y="${H-4}" text-anchor="middle" fill="#666" font-size="10">${p.date}</text>`).join('')}
-        ${pts.map((p,i)=>{
-          const isLast = i === pts.length-1;
-          if (!isLast && i % step !== 0) return '';
-          const label = `${Math.round(p.val*10)/10} × ${p.reps}`;
-          return isLast
-            ? `<text x="${p.x}" y="${p.y-10}" text-anchor="middle" fill="#9d93f5" font-size="11" font-weight="700">${label}</text>`
-            : `<text x="${p.x}" y="${p.y-8}" text-anchor="middle" fill="#888" font-size="9">${label}</text>`;
-        }).join('')}
+        ${progSel<0 ? `<text x="${last.x}" y="${last.y-10}" text-anchor="middle" fill="#9d93f5" font-size="11" font-weight="700">${fmtVal(last.val)}${progMetric==='top'?' × '+last.reps:''}</text>` : chartTip(pts[progSel], tipText(pts[progSel]), W)}
       </svg>
-      <div class="mini-stats">
-        <div class="mini-stat"><div class="mini-val">${Math.round(Math.max(...vals)*10)/10}</div><div class="mini-label">Max (kg)</div></div>
-        <div class="mini-stat"><div class="mini-val">${Math.round(vals[vals.length-1]*10)/10}</div><div class="mini-label">Last (kg)</div></div>
+      <div class="mini-stats${relStr!=null?' four':''}">
+        <div class="mini-stat"><div class="mini-val">${fmtVal(Math.max(...vals))}</div><div class="mini-label">Max${M.unit?' ('+M.unit+')':''}</div></div>
+        <div class="mini-stat"><div class="mini-val">${fmtVal(vals[vals.length-1])}</div><div class="mini-label">Last${M.unit?' ('+M.unit+')':''}</div></div>
         <div class="mini-stat"><div class="mini-val">${data.length}</div><div class="mini-label">Sessions</div></div>
+        ${relStr!=null?`<div class="mini-stat"><div class="mini-val">${relStr.toFixed(2)}×</div><div class="mini-label">BW ratio</div></div>`:''}
       </div>
     </div>`;
+}
+
+function setMbRange(r){ mbRange = r; renderMuscleBalance(); }
+function renderMuscleBalance() {
+  const el = document.getElementById('muscle-balance');
+  if (!appData.workouts.length) { el.innerHTML = ''; return; }
+  const dayMs = 86400000;
+  const cutoff = mbRange==='all' ? null : Date.now() - (mbRange==='week'?7:30)*dayMs;
+  const byCat = {};
+  appData.workouts.forEach(w => {
+    if (cutoff!=null && new Date(w.date).getTime() < cutoff) return;
+    w.exercises.forEach(ex => {
+      const c = exCategory(ex.name);
+      ex.sets.forEach(s => { if (s.warmup) return; const kg=setKg(s); if(kg>0) byCat[c]=(byCat[c]||0)+kg*(parseInt(s.r)||0); });
+    });
+  });
+  const entries = Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
+  const seg = `<div class="seg" style="margin-bottom:10px">
+    <button class="${mbRange==='week'?'active':''}" onclick="setMbRange('week')">1W</button>
+    <button class="${mbRange==='month'?'active':''}" onclick="setMbRange('month')">1M</button>
+    <button class="${mbRange==='all'?'active':''}" onclick="setMbRange('all')">All</button>
+  </div>`;
+  const header = `<div style="font-size:11px;font-weight:700;color:var(--text2);letter-spacing:1px;margin-bottom:10px">MUSCLE BALANCE</div>`;
+  if (!entries.length) {
+    el.innerHTML = header + seg + `<div class="chart-wrap" style="text-align:center;color:var(--text2);padding:30px">No working sets in this range.</div>`;
+    return;
+  }
+  const max = entries[0][1];
+  const u = appData.weightUnit;
+  const disp = kg => u==='lbs' ? kg*2.2046 : kg;
+  const bars = entries.map(([c,v])=>`
+    <div style="margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+        <span>${c}</span><span style="color:var(--text2)">${Math.round(disp(v)).toLocaleString()} ${u}·reps</span>
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;height:10px;overflow:hidden">
+        <div style="background:var(--accent);height:100%;width:${Math.max(3,(v/max)*100)}%"></div>
+      </div>
+    </div>`).join('');
+  el.innerHTML = header + seg + `<div class="chart-wrap">${bars}</div>`;
 }
 
 // ── WEIGHT ─────────────────────────────────────────────────
 let weightView = 'daily'; // 'daily' | 'avg'
 let weightRange = 'all';  // 'week' | 'biweek' | 'month' | 'all'
+let weightSel = -1;       // tapped point index (-1 = none)
 const KG_PER_LB = 1/2.2046;
 
 function todayISO() {
@@ -945,13 +1106,17 @@ async function toggleWeightUnit() {
 
 function setWeightView(mode) {
   weightView = mode;
+  weightSel = -1;
   renderWeightChart();
 }
 
 function setWeightRange(r) {
   weightRange = r;
+  weightSel = -1;
   renderWeightChart();
 }
+
+function tapWeight(i){ weightSel = (weightSel===i ? -1 : i); renderWeightChart(); }
 
 function computeRollingAvg(entries, windowDays=7) {
   if (!entries.length) return [];
@@ -1068,6 +1233,9 @@ function renderWeightChart() {
     const expectedKg = viewSorted[0].kg + (tLast - tFirst)*(appData.targetWeeklyKg/(7*dayMs));
     vsTarget = currentKg - expectedKg;
   }
+  // Gain/loss across the currently selected time horizon (daily endpoints)
+  const rangeLabel = {week:'1W', biweek:'2W', month:'1M', all:'All'}[weightRange];
+  const rangeDiff = toDisp(viewSorted[viewSorted.length-1].kg) - toDisp(viewSorted[0].kg);
 
   const targetSvg = hasTarget ? `
     <line x1="${pt.l}" y1="${yFor(targetStart)}" x2="${W-pt.r}" y2="${yFor(targetEnd)}" stroke="#f59e0b" stroke-width="2" stroke-dasharray="5,4" opacity="0.85"/>
@@ -1090,17 +1258,23 @@ function renderWeightChart() {
         <polygon points="${area}" fill="url(#gw)"/>
         ${targetSvg}
         <polyline points="${poly}" fill="none" stroke="#7c6fef" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
-        ${weightView==='daily' ? pts.map(p=>`<circle cx="${p.x}" cy="${p.y}" r="3.5" fill="#7c6fef" stroke="#1a1a1a" stroke-width="2"/>`).join('') : ''}
+        ${weightView==='daily'
+          ? pts.map((p,i)=>`<circle cx="${p.x}" cy="${p.y}" r="${i===weightSel?5.5:3.5}" fill="${i===weightSel?'#9d93f5':'#7c6fef'}" stroke="#1a1a1a" stroke-width="2"/>`).join('')
+          : (weightSel>=0 ? `<circle cx="${pts[weightSel].x}" cy="${pts[weightSel].y}" r="5.5" fill="#9d93f5" stroke="#1a1a1a" stroke-width="2"/>` : '')}
+        ${pts.map((p,i)=>`<circle cx="${p.x}" cy="${p.y}" r="12" fill="transparent" onclick="tapWeight(${i})" style="cursor:pointer"/>`).join('')}
         ${xTicks.map(p=>`<text x="${p.x}" y="${H-4}" text-anchor="middle" fill="#666" font-size="10">${p.date}</text>`).join('')}
-        <text x="${last.x}" y="${last.y-10}" text-anchor="middle" fill="#9d93f5" font-size="11" font-weight="700">${Math.round(last.val*10)/10} ${u}</text>
+        ${weightSel<0
+          ? `<text x="${last.x}" y="${last.y-10}" text-anchor="middle" fill="#9d93f5" font-size="11" font-weight="700">${Math.round(last.val*10)/10} ${u}</text>`
+          : chartTip(pts[weightSel], `${Math.round(pts[weightSel].val*10)/10} ${u} · ${pts[weightSel].date}`, W)}
       </svg>
-      <div class="mini-stats">
+      <div class="mini-stats four">
         <div class="mini-stat"><div class="mini-val">${fmtWeight(currentKg)}</div><div class="mini-label">Current (${u})</div></div>
         <div class="mini-stat"><div class="mini-val">${fmtWeight(avg7Last)}</div><div class="mini-label">7-Day Avg (${u})</div></div>
         ${hasTarget
           ? `<div class="mini-stat"><div class="mini-val" style="color:${vsTarget>=0?'#22c55e':'#ef4444'}">${(vsTarget>=0?'+':'')+fmtWeight(vsTarget)}</div><div class="mini-label">vs target (${u})</div></div>`
           : `<div class="mini-stat"><div class="mini-val">${change30===null?'—':(change30>=0?'+':'')+fmtWeight(change30)}</div><div class="mini-label">vs 30d ago</div></div>`
         }
+        <div class="mini-stat"><div class="mini-val" style="color:${rangeDiff>=0?'#22c55e':'#ef4444'}">${(rangeDiff>=0?'+':'')+Math.round(rangeDiff*10)/10}</div><div class="mini-label">Δ ${rangeLabel} (${u})</div></div>
       </div>
     </div>`;
 }
