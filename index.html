@@ -565,9 +565,14 @@ function renderExList() {
   document.getElementById('finish-fab').style.display = 'block';
   el.innerHTML = wk.exercises.map((ex,ei)=>{
     const stats = getExStats(ex.name);
+    const bothScales = (s) => {
+      const kg = s.u === 'kg' ? (parseFloat(s.w)||0) : Math.round(s.wKg*10)/10;
+      const lbs = s.u === 'lbs' ? (parseFloat(s.w)||0) : Math.round(s.wKg*2.2046*10)/10;
+      return `${kg} kg / ${lbs} lbs`;
+    };
     const statsHtml = (stats.last || stats.pr) ? `<div class="ex-stats">${
-      stats.last ? `<span>Last: <strong>${stats.last.w} ${stats.last.u} x ${stats.last.r}</strong> (${new Date(stats.last.date).toLocaleDateString('en-US',{month:'short',day:'numeric'})})</span>` : ''
-    }${stats.pr ? `<span>PR: <strong>${stats.pr.w} ${stats.pr.u} x ${stats.pr.r}</strong></span>` : ''}</div>` : '';
+      stats.last ? `<span>Last: <strong>${bothScales(stats.last)} x ${stats.last.r}</strong> (${new Date(stats.last.date).toLocaleDateString('en-US',{month:'short',day:'numeric'})})</span>` : ''
+    }${stats.pr ? `<span>PR: <strong>${bothScales(stats.pr)} x ${stats.pr.r}</strong></span>` : ''}</div>` : '';
     return `
     <div class="ex-card">
       <div class="ex-header">
