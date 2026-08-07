@@ -115,6 +115,14 @@ select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
 .gym-row{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px;padding:7px 0;border-bottom:1px solid var(--border)}
 .gym-row:last-child{border-bottom:none}
 .gym-row strong{color:var(--accent2);font-weight:700}
+/* ── WEIGHT RANGE SLIDER ── */
+.range-slider-labels{display:flex;justify-content:space-between;font-size:11px;color:var(--text2);font-weight:600;margin-bottom:2px}
+.range-slider{position:relative;height:36px;margin:2px 2px 6px}
+.range-slider-track{position:absolute;top:50%;left:0;right:0;height:4px;background:var(--bg3);border-radius:2px;transform:translateY(-50%)}
+.range-slider-fill{position:absolute;top:50%;height:4px;background:var(--accent);border-radius:2px;transform:translateY(-50%)}
+.range-slider-handle{position:absolute;top:50%;left:0;transform:translate(-50%,-50%);width:36px;height:36px;display:flex;align-items:center;justify-content:center;cursor:grab;touch-action:none;-webkit-tap-highlight-color:transparent}
+.range-slider-handle::after{content:'';width:18px;height:18px;border-radius:50%;background:var(--accent2);border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35);transition:width .1s,box-shadow .1s}
+.range-slider-handle:active::after{box-shadow:0 2px 8px rgba(0,0,0,.5);width:20px;height:20px}
 </style>
 </head>
 <body>
@@ -1256,9 +1264,11 @@ function renderMuscleBalance() {
 
 // ── WEIGHT ─────────────────────────────────────────────────
 let weightView = 'daily'; // 'daily' | 'avg'
-let weightRange = 'all';  // 'week' | 'biweek' | 'month' | 'all'
+let weightRange = 'all';  // 'week' | 'biweek' | 'month' | 'all' | 'custom'
 let weightSel = -1;       // tapped point index (-1 = none)
 const KG_PER_LB = 1/2.2046;
+let wr = null;             // {domainStart, domainEnd, totalDays, startT, endT} — active window for the weight chart's drag slider
+let wrDragRAF = null;
 
 function todayISO() {
   const d = new Date();
@@ -1346,16 +1356,17 @@ async function toggleWeightUnit() {
 function setWeightView(mode) {
   weightView = mode;
   weightSel = -1;
-  renderWeightChart();
+  renderWeightChartBody();   // slider window is unaffected — no need to rebuild it
 }
 
 function setWeightRange(r) {
   weightRange = r;
   weightSel = -1;
+  wr = null;   // drop any custom drag selection, recompute from the preset
   renderWeightChart();
 }
 
-function tapWeight(i){ weightSel = (weightSel===i ? -1 : i); renderWeightChart(); }
+function tapWeight(i){ weightSel = (weightSel===i ? -1 : i); renderWeightChartBody(); }
 
 function computeRollingAvg(entries, windowDays=7) {
   if (!entries.length) return [];
@@ -1385,22 +1396,119 @@ function renderWeightList() {
     </div>`).join('');
 }
 
-function renderWeightChart() {
-  const el = document.getElementById('weight-chart-area');
-  const u = appData.weightUnit;
-  const rangeHtml = `<div class="seg">
+// ── WEIGHT RANGE SLIDER ─────────────────────────────────────
+// Drag-to-select period for the weight chart. `wr` is the single source of truth for
+// the active window; presets rebuild it from scratch, dragging mutates it directly so
+// the slider's own DOM nodes are never re-created mid-gesture — replacing them under a
+// captured pointer would silently end the drag.
+function wrFmtDay(t){ return new Date(t).toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
+
+function initWeightRange(sorted) {
+  const dayMs = 86400000;
+  const floorDay = t => Math.floor(t/dayMs)*dayMs;
+  const domainStart = floorDay(new Date(sorted[0].date).getTime());
+  const domainEnd   = Math.max(floorDay(new Date(sorted[sorted.length-1].date).getTime()), floorDay(Date.now()));
+  const totalDays   = Math.max(1, Math.round((domainEnd - domainStart)/dayMs));
+  if (weightRange === 'custom' && wr) {
+    // Data may have changed since the drag (new/deleted entry) — keep the chosen
+    // window, just reclamp it to the (possibly shifted) domain.
+    wr = {domainStart, domainEnd, totalDays,
+      startT: Math.min(Math.max(wr.startT, domainStart), domainEnd),
+      endT:   Math.max(Math.min(wr.endT, domainEnd + dayMs - 1), domainStart)};
+    return;
+  }
+  const cutoffByRange = {week:7, biweek:14, month:30};
+  const endT = domainEnd + dayMs - 1;
+  const startT = weightRange==='all' ? domainStart : Math.max(domainStart, floorDay(Date.now() - cutoffByRange[weightRange]*dayMs));
+  wr = {domainStart, domainEnd, totalDays, startT, endT};
+}
+
+function weightSliderHtml() {
+  const dayMs = 86400000;
+  const sp = wr.totalDays ? ((wr.startT-wr.domainStart)/dayMs/wr.totalDays)*100 : 0;
+  const ep = wr.totalDays ? ((wr.endT-wr.domainStart)/dayMs/wr.totalDays)*100 : 100;
+  return `
+    <div class="range-slider-labels"><span id="wr-lbl-start">${wrFmtDay(wr.startT)}</span><span id="wr-lbl-end">${wrFmtDay(wr.endT)}</span></div>
+    <div class="range-slider" id="wr-slider">
+      <div class="range-slider-track"></div>
+      <div class="range-slider-fill" id="wr-fill" style="left:${sp}%;width:${Math.max(0,ep-sp)}%"></div>
+      <div class="range-slider-handle" id="wr-h-start" style="left:${sp}%" onpointerdown="wrDragStart(event,'start')"></div>
+      <div class="range-slider-handle" id="wr-h-end" style="left:${ep}%" onpointerdown="wrDragStart(event,'end')"></div>
+    </div>`;
+}
+
+function updateWeightSliderUI() {
+  const dayMs = 86400000;
+  const sp = wr.totalDays ? ((wr.startT-wr.domainStart)/dayMs/wr.totalDays)*100 : 0;
+  const ep = wr.totalDays ? ((wr.endT-wr.domainStart)/dayMs/wr.totalDays)*100 : 100;
+  document.getElementById('wr-h-start').style.left = sp+'%';
+  document.getElementById('wr-h-end').style.left = ep+'%';
+  document.getElementById('wr-fill').style.left = sp+'%';
+  document.getElementById('wr-fill').style.width = Math.max(0,ep-sp)+'%';
+  document.getElementById('wr-lbl-start').textContent = wrFmtDay(wr.startT);
+  document.getElementById('wr-lbl-end').textContent = wrFmtDay(wr.endT);
+}
+
+function renderWeightSegButtons() {
+  const el = document.getElementById('weight-range-seg');
+  if (!el) return;
+  el.innerHTML = `
     <button class="${weightRange==='week'?'active':''}" onclick="setWeightRange('week')">1W</button>
     <button class="${weightRange==='biweek'?'active':''}" onclick="setWeightRange('biweek')">2W</button>
     <button class="${weightRange==='month'?'active':''}" onclick="setWeightRange('month')">1M</button>
-    <button class="${weightRange==='all'?'active':''}" onclick="setWeightRange('all')">All</button>
-  </div>`;
+    <button class="${weightRange==='all'?'active':''}" onclick="setWeightRange('all')">All</button>`;
+}
+
+function wrDragStart(e, which) {
+  e.preventDefault();
+  const handle = e.currentTarget;
+  const track = document.getElementById('wr-slider');
+  handle.setPointerCapture(e.pointerId);
+  const dayMs = 86400000;
+  const move = (ev) => {
+    const rect = track.getBoundingClientRect();
+    const pct = rect.width ? Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width)) : 0;
+    let day = Math.round(pct * wr.totalDays);
+    // floor, not round: endT is stored as end-of-day (domainStart + day*dayMs + dayMs-1),
+    // so its fractional day is ~0.99999 and Math.round would bump it to the next day.
+    const startDay = Math.floor((wr.startT - wr.domainStart)/dayMs);
+    const endDay   = Math.floor((wr.endT   - wr.domainStart)/dayMs);
+    if (which==='start') { day = Math.min(day, endDay); wr.startT = wr.domainStart + day*dayMs; }
+    else                 { day = Math.max(day, startDay); wr.endT = wr.domainStart + day*dayMs + dayMs - 1; }
+    weightRange = 'custom';
+    weightSel = -1;
+    updateWeightSliderUI();
+    if (!wrDragRAF) wrDragRAF = requestAnimationFrame(() => { wrDragRAF = null; renderWeightChartBody(); });
+  };
+  const up = () => {
+    handle.releasePointerCapture(e.pointerId);
+    handle.removeEventListener('pointermove', move);
+    handle.removeEventListener('pointerup', up);
+    handle.removeEventListener('pointercancel', up);
+    if (wrDragRAF) { cancelAnimationFrame(wrDragRAF); wrDragRAF = null; }
+    renderWeightSegButtons();   // presets now show none selected — window is custom
+    renderWeightChartBody();
+  };
+  handle.addEventListener('pointermove', move);
+  handle.addEventListener('pointerup', up);
+  handle.addEventListener('pointercancel', up);
+}
+
+function renderWeightChart() {
+  const el = document.getElementById('weight-chart-area');
   const viewHtml = `<div class="seg">
     <button class="${weightView==='daily'?'active':''}" onclick="setWeightView('daily')">Daily</button>
     <button class="${weightView==='avg'?'active':''}" onclick="setWeightView('avg')">7-Day Avg</button>
   </div>`;
-  const segHtml = rangeHtml + viewHtml;
+  const segHtml = `<div class="seg" id="weight-range-seg">
+    <button class="${weightRange==='week'?'active':''}" onclick="setWeightRange('week')">1W</button>
+    <button class="${weightRange==='biweek'?'active':''}" onclick="setWeightRange('biweek')">2W</button>
+    <button class="${weightRange==='month'?'active':''}" onclick="setWeightRange('month')">1M</button>
+    <button class="${weightRange==='all'?'active':''}" onclick="setWeightRange('all')">All</button>
+  </div>` + viewHtml;
 
   if (appData.weights.length < 2) {
+    wr = null;
     el.innerHTML = segHtml + `<div class="chart-wrap" style="text-align:center;color:var(--text2);padding:40px">${
       appData.weights.length===0 ? 'No data yet — log your first weight above!' : 'Log at least 2 entries to see a chart.'
     }</div>`;
@@ -1408,13 +1516,21 @@ function renderWeightChart() {
   }
 
   const sorted = appData.weights.slice().sort((a,b)=>a.date.localeCompare(b.date));
+  initWeightRange(sorted);
+  el.innerHTML = segHtml + weightSliderHtml() + `<div id="weight-chart-body"></div>`;
+  renderWeightChartBody();
+}
+
+function renderWeightChartBody() {
+  const el = document.getElementById('weight-chart-body');
+  if (!el || !wr) return;
+  const u = appData.weightUnit;
   const dayMs = 86400000;
-  const cutoffByRange = {week:7, biweek:14, month:30};
-  const cutoff = weightRange==='all' ? null : Date.now() - cutoffByRange[weightRange]*dayMs;
-  const viewSorted = cutoff==null ? sorted : sorted.filter(d => new Date(d.date).getTime() >= cutoff);
+  const sorted = appData.weights.slice().sort((a,b)=>a.date.localeCompare(b.date));
+  const viewSorted = sorted.filter(d => { const t = new Date(d.date).getTime(); return t >= wr.startT && t <= wr.endT; });
 
   if (viewSorted.length < 2) {
-    el.innerHTML = segHtml + `<div class="chart-wrap" style="text-align:center;color:var(--text2);padding:40px">Log at least 2 entries in this range to see a chart.</div>`;
+    el.innerHTML = `<div class="chart-wrap" style="text-align:center;color:var(--text2);padding:40px">Log at least 2 entries in this range to see a chart.</div>`;
     return;
   }
 
@@ -1473,7 +1589,7 @@ function renderWeightChart() {
     vsTarget = currentKg - expectedKg;
   }
   // Gain/loss across the currently selected time horizon (daily endpoints)
-  const rangeLabel = {week:'1W', biweek:'2W', month:'1M', all:'All'}[weightRange];
+  const rangeLabel = {week:'1W', biweek:'2W', month:'1M', all:'All', custom:'Selected'}[weightRange];
   const rangeDiff = toDisp(viewSorted[viewSorted.length-1].kg) - toDisp(viewSorted[0].kg);
 
   const targetSvg = hasTarget ? `
@@ -1481,7 +1597,7 @@ function renderWeightChart() {
     <text x="${W-pt.r}" y="${yFor(targetEnd)-6}" text-anchor="end" fill="#f59e0b" font-size="10" font-weight="700">target</text>
   ` : '';
 
-  el.innerHTML = segHtml + `
+  el.innerHTML = `
     <div class="chart-wrap">
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px">
         <div style="font-weight:700;font-size:15px">${weightView==='avg' ? '7-Day Avg' : 'Daily'}</div>
