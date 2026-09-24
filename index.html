@@ -705,7 +705,7 @@ function renderExList() {
     const bothScales = (s) => {
       const kg = s.u === 'kg' ? (parseFloat(s.w)||0) : Math.round(s.wKg*10)/10;
       const lbs = s.u === 'lbs' ? (parseFloat(s.w)||0) : Math.round(s.wKg*2.2046*10)/10;
-      return `${kg} kg / ${lbs} lbs`;
+      return kg > 0 ? `${kg} kg / ${lbs} lbs` : 'Bodyweight';
     };
     const scopeNote = stats.scope ? ` <span style="opacity:.75">@ ${esc(stats.scope)}</span>`
                     : stats.fallback ? ` <span style="opacity:.75">(all gyms)</span>` : '';
@@ -800,7 +800,7 @@ function getExStats(name, gym) {
         for (const s of ex.sets) {
           if (s.warmup) continue;
           const wKg = s.u === 'lbs' ? (parseFloat(s.w)||0)/2.2046 : (parseFloat(s.w)||0);
-          if (wKg <= 0) continue;
+          if (wKg <= 0 && !(parseInt(s.r) > 0)) continue;   // bodyweight sets count when they have reps
           const entry = {w: parseFloat(s.w)||0, u: s.u, r: parseInt(s.r)||0, wKg, date: w.date};
           if (!sessionBest || wKg > sessionBest.wKg || (wKg === sessionBest.wKg && entry.r > sessionBest.r)) sessionBest = entry;
           if (!pr || wKg > pr.wKg || (wKg === pr.wKg && entry.r > pr.r)) pr = entry;
@@ -1041,21 +1041,34 @@ async function deleteExercise(wi, ei) {
 
 // ── PROGRESS ───────────────────────────────────────────────
 let exMap = {};
-let progMetric = 'top';   // 'top' | 'e1rm' | 'vol'
+let progMetric = 'top';   // 'top' | 'smooth' | 'e1rm' | 'vol'
 let progGym = 'all';      // 'all' | '' (unlabelled) | gym name
 let progSel = -1;         // tapped point index (-1 = none)
 let mbRange = 'month';    // muscle-balance window: 'week' | 'month' | 'all'
 
 const PROG_METRICS = {
   top:  {key:'maxKg', label:'Top set', unit:'kg', overall:'kg'},
+  smooth:{key:'smooth', label:'Top (smoothed)', unit:'kg', overall:'kg'},
   e1rm: {key:'e1rm',  label:'Est 1RM', unit:'kg', overall:'kg'},
   vol:  {key:'vol',   label:'Volume',  unit:'',   overall:'kg·reps'}
 };
 
+const SMOOTH_ALPHA = 0.4;
+
 // Sessions for the selected exercise, restricted to the active gym filter.
 function progData(name) {
   const d = exMap[name] || [];
-  return progGym==='all' ? d : d.filter(p => (p.gym||'') === progGym);
+  let f = progGym==='all' ? d : d.filter(p => (p.gym||'') === progGym);
+  // Smoothed top set: Epley e1RM of each session's heaviest set (weight + reps in one number),
+  // run through an exponential moving average so single good/bad days don't dominate.
+  // No weight ever used for this exercise → track reps instead of kg.
+  const bw = f.length > 0 && f.every(p => p.maxKg === 0);
+  if (bw) f = f.map(p => ({...p, maxKg: p.reps, topE1rm: p.reps, e1rm: p.reps, vol: p.totReps, bw: true}));
+  let ema = null;
+  return f.map(p => {
+    ema = ema===null ? p.topE1rm : SMOOTH_ALPHA*p.topE1rm + (1-SMOOTH_ALPHA)*ema;
+    return {...p, smooth: ema};
+  });
 }
 
 function renderGymFilter() {
@@ -1082,18 +1095,19 @@ function renderProgressScreen() {
   exMap = {};
   appData.workouts.forEach(w => {
     w.exercises.forEach(ex => {
-      let best = {kg: -Infinity, reps: 0}, bestE = 0, vol = 0;
+      let best = {kg: -Infinity, reps: 0}, bestE = 0, vol = 0, totReps = 0;
       ex.sets.forEach(s => {
         if (s.warmup) return;
-        const kg = setKg(s); if (kg <= 0) return;
-        const reps = parseInt(s.r) || 0;
-        if (kg > best.kg) best = {kg, reps};
+        const kg = setKg(s), reps = parseInt(s.r) || 0;
+        if (kg <= 0 && reps <= 0) return;   // empty set; 0 kg with reps is a bodyweight set
+        if (kg > best.kg || (kg === best.kg && reps > best.reps)) best = {kg, reps};
+        totReps += reps;
         const e = e1RM(kg, reps); if (e > bestE) bestE = e;
         vol += kg * reps;
       });
       if (best.kg > -Infinity) {
         if (!exMap[ex.name]) exMap[ex.name] = [];
-        exMap[ex.name].push({date: w.date, gym: w.gym||null, maxKg: best.kg, reps: best.reps, e1rm: bestE, vol});
+        exMap[ex.name].push({date: w.date, gym: w.gym||null, maxKg: best.kg, reps: best.reps, e1rm: bestE, topE1rm: e1RM(best.kg, best.reps), vol, totReps});
       }
     });
   });
@@ -1126,13 +1140,16 @@ function gymBreakdownHtml(name) {
   const keys = Object.keys(groups);
   if (keys.length < 2) return '';
   const M = PROG_METRICS[progMetric];
-  const unit = M.unit ? ' '+M.unit : '';
+  const bw = all.every(p => p.maxKg === 0);   // bodyweight-only exercise → reps
+  const unit = bw ? ' reps' : M.unit ? ' '+M.unit : '';
+  // breakdown is per-gym raw values, not smoothed
+  const key = bw ? (progMetric==='vol' ? 'totReps' : 'reps') : M.key==='smooth' ? 'topE1rm' : M.key;
   const rows = keys.map(k => {
     const pts = groups[k];
     return {
       label: k || 'No gym set',
-      best: Math.max(...pts.map(p=>p[M.key])),
-      last: pts[pts.length-1][M.key],
+      best: Math.max(...pts.map(p=>p[key])),
+      last: pts[pts.length-1][key],
       sessions: pts.length
     };
   }).sort((a,b)=>b.best-a.best);
@@ -1157,7 +1174,8 @@ function renderChart() {
     el.innerHTML = `<div class="chart-wrap" style="text-align:center;color:var(--text2);padding:40px">${msg}</div>` + gymBreakdownHtml(name);
     return;
   }
-  const M = PROG_METRICS[progMetric];
+  const bwMode = !!data[0].bw;   // bodyweight-only exercise: everything is in reps
+  const M = bwMode ? {...PROG_METRICS[progMetric], unit:'reps', overall:'reps'} : PROG_METRICS[progMetric];
   const W=340,H=180,pt={t:20,r:16,b:38,l:46};
   const cW=W-pt.l-pt.r, cH=H-pt.t-pt.b;
   const vals=data.map(d=>d[M.key]);
@@ -1181,13 +1199,13 @@ function renderChart() {
   const diff=vals[vals.length-1]-vals[0];
   const tc=diff>=0?'#16a34a':'#dc2626';
   const tipText = p => {
-    const base = progMetric==='top' ? `${fmtVal(p.val)} kg × ${p.reps}` : progMetric==='e1rm' ? `${fmtVal(p.val)} kg · ${p.date}` : `${fmtVal(p.val)} kg·reps · ${p.date}`;
+    const base = bwMode ? `${fmtVal(p.val)} reps · ${p.date}` : progMetric==='top' ? `${fmtVal(p.val)} kg × ${p.reps}` : progMetric==='smooth' ? `${fmtVal(p.val)} kg smoothed · ${p.date}` : progMetric==='e1rm' ? `${fmtVal(p.val)} kg · ${p.date}` : `${fmtVal(p.val)} kg·reps · ${p.date}`;
     return mixedGyms && p.gym ? `${base} · ${esc(p.gym)}` : base;
   };
   // Relative strength (best e1RM ÷ latest bodyweight) — only if weight data exists
   const bestE1RM = Math.max(...data.map(d=>d.e1rm));
   const bw = appData.weights.length ? appData.weights[appData.weights.length-1].kg : null;
-  const relStr = bw ? (bestE1RM/bw) : null;
+  const relStr = bw && !bwMode ? (bestE1RM/bw) : null;
   el.innerHTML=`
     <div class="chart-wrap">
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:${mixedGyms||progGym!=='all'?'4px':'12px'}">
@@ -1209,7 +1227,7 @@ function renderChart() {
         ${pts.map((p,i)=>`<circle cx="${p.x}" cy="${p.y}" r="${i===progSel?6:4}" fill="${i===progSel?'#4338ca':'#4f46e5'}" stroke="#ffffff" stroke-width="2"/>`).join('')}
         ${pts.map((p,i)=>`<circle cx="${p.x}" cy="${p.y}" r="12" fill="transparent" onclick="tapProg(${i})" style="cursor:pointer"/>`).join('')}
         ${xTicks.map(p=>`<text x="${p.x}" y="${H-4}" text-anchor="middle" fill="#9ca3af" font-size="10">${p.date}</text>`).join('')}
-        ${progSel<0 ? `<text x="${last.x}" y="${last.y-10}" text-anchor="middle" fill="#4338ca" font-size="11" font-weight="700">${fmtVal(last.val)}${progMetric==='top'?' × '+last.reps:''}</text>` : chartTip(pts[progSel], tipText(pts[progSel]), W)}
+        ${progSel<0 ? `<text x="${last.x}" y="${last.y-10}" text-anchor="middle" fill="#4338ca" font-size="11" font-weight="700">${fmtVal(last.val)}${progMetric==='top'&&!bwMode?' × '+last.reps:''}</text>` : chartTip(pts[progSel], tipText(pts[progSel]), W)}
       </svg>
       <div class="mini-stats${relStr!=null?' four':''}">
         <div class="mini-stat"><div class="mini-val">${fmtVal(Math.max(...vals))}</div><div class="mini-label">Max${M.unit?' ('+M.unit+')':''}</div></div>
