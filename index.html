@@ -1041,34 +1041,26 @@ async function deleteExercise(wi, ei) {
 
 // ── PROGRESS ───────────────────────────────────────────────
 let exMap = {};
-let progMetric = 'top';   // 'top' | 'smooth' | 'e1rm' | 'vol'
+let progMetric = 'top';   // 'top' | 'combo' | 'e1rm' | 'vol'
 let progGym = 'all';      // 'all' | '' (unlabelled) | gym name
 let progSel = -1;         // tapped point index (-1 = none)
 let mbRange = 'month';    // muscle-balance window: 'week' | 'month' | 'all'
 
 const PROG_METRICS = {
   top:  {key:'maxKg', label:'Top set', unit:'kg', overall:'kg'},
-  smooth:{key:'smooth', label:'Top (smoothed)', unit:'kg', overall:'kg'},
+  combo:{key:'topE1rm', label:'Top + reps', unit:'kg', overall:'kg'},
   e1rm: {key:'e1rm',  label:'Est 1RM', unit:'kg', overall:'kg'},
   vol:  {key:'vol',   label:'Volume',  unit:'',   overall:'kg·reps'}
 };
-
-const SMOOTH_ALPHA = 0.4;
 
 // Sessions for the selected exercise, restricted to the active gym filter.
 function progData(name) {
   const d = exMap[name] || [];
   let f = progGym==='all' ? d : d.filter(p => (p.gym||'') === progGym);
-  // Smoothed top set: Epley e1RM of each session's heaviest set (weight + reps in one number),
-  // run through an exponential moving average so single good/bad days don't dominate.
+  // Top set + reps: Epley e1RM of each session's heaviest set (topE1rm), so weight and reps are one number.
   // No weight ever used for this exercise → track reps instead of kg.
   const bw = f.length > 0 && f.every(p => p.maxKg === 0);
-  if (bw) f = f.map(p => ({...p, maxKg: p.reps, topE1rm: p.reps, e1rm: p.reps, vol: p.totReps, bw: true}));
-  let ema = null;
-  return f.map(p => {
-    ema = ema===null ? p.topE1rm : SMOOTH_ALPHA*p.topE1rm + (1-SMOOTH_ALPHA)*ema;
-    return {...p, smooth: ema};
-  });
+  return bw ? f.map(p => ({...p, maxKg: p.reps, topE1rm: p.reps, e1rm: p.reps, vol: p.totReps, bw: true})) : f;
 }
 
 function renderGymFilter() {
@@ -1142,8 +1134,7 @@ function gymBreakdownHtml(name) {
   const M = PROG_METRICS[progMetric];
   const bw = all.every(p => p.maxKg === 0);   // bodyweight-only exercise → reps
   const unit = bw ? ' reps' : M.unit ? ' '+M.unit : '';
-  // breakdown is per-gym raw values, not smoothed
-  const key = bw ? (progMetric==='vol' ? 'totReps' : 'reps') : M.key==='smooth' ? 'topE1rm' : M.key;
+  const key = bw ? (progMetric==='vol' ? 'totReps' : 'reps') : M.key;
   const rows = keys.map(k => {
     const pts = groups[k];
     return {
@@ -1199,7 +1190,7 @@ function renderChart() {
   const diff=vals[vals.length-1]-vals[0];
   const tc=diff>=0?'#16a34a':'#dc2626';
   const tipText = p => {
-    const base = bwMode ? `${fmtVal(p.val)} reps · ${p.date}` : progMetric==='top' ? `${fmtVal(p.val)} kg × ${p.reps}` : progMetric==='smooth' ? `${fmtVal(p.val)} kg smoothed · ${p.date}` : progMetric==='e1rm' ? `${fmtVal(p.val)} kg · ${p.date}` : `${fmtVal(p.val)} kg·reps · ${p.date}`;
+    const base = bwMode ? `${fmtVal(p.val)} reps · ${p.date}` : progMetric==='top' ? `${fmtVal(p.val)} kg × ${p.reps}` : progMetric==='combo' ? `${fmtVal(p.val)} kg (${fmtVal(p.maxKg)} × ${p.reps}) · ${p.date}` : progMetric==='e1rm' ? `${fmtVal(p.val)} kg · ${p.date}` : `${fmtVal(p.val)} kg·reps · ${p.date}`;
     return mixedGyms && p.gym ? `${base} · ${esc(p.gym)}` : base;
   };
   // Relative strength (best e1RM ÷ latest bodyweight) — only if weight data exists
